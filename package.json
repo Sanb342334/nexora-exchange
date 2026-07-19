@@ -1,0 +1,15 @@
+{
+  "name": "p2p-exchange",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Внутренняя P2P-платформа по продаже USDT (посредник + Bybit-хедж)",
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "backend:install": "cd backend && npm install",
+    "backend:dev": "cd backend && npm run start:dev",
+    "backend:setup": "cd backend && npm run prisma:generate && npm run prisma:migrate && npm run db:seed",
+    "frontend:install": "cd frontend && npm install",
+    "frontend:dev": "cd frontend && npm run dev"
+  }
+}
