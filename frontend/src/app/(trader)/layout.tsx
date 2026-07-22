@@ -1,5 +1,5 @@
-import { AppShell } from '@/components/AppShell';
+import { NexoraShell } from '@/components/nexora/NexoraShell';
 
 export default function TraderLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell role="TRADER">{children}</AppShell>;
+  return <NexoraShell>{children}</NexoraShell>;
 }

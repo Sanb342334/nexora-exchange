@@ -4,7 +4,7 @@ import * as argon2 from 'argon2';
 const prisma = new PrismaClient();
 
 const BASE_ASSET = process.env.BASE_ASSET ?? 'USDT';
-const BASE_FIAT = process.env.BASE_FIAT ?? 'RUB';
+const BASE_FIAT = process.env.BASE_FIAT ?? 'KZT';
 
 async function ensureWallet(userId: string, currency: string, type: 'USER' | 'HOUSE') {
   const existing = await prisma.wallet.findUnique({
@@ -59,7 +59,6 @@ async function creditUser(userId: string, currency: string, amount: string) {
 async function main() {
   console.log('Seeding database...');
 
-  // 1) System (house) account
   const system = await prisma.user.upsert({
     where: { username: 'system' },
     update: {},
@@ -73,8 +72,8 @@ async function main() {
   });
   await ensureWallet(system.id, BASE_ASSET, 'HOUSE');
   await ensureWallet(system.id, BASE_FIAT, 'HOUSE');
+  await creditUser(system.id, BASE_ASSET, '1000000');
 
-  // 2) Admin (platform owner)
   const adminUsername = process.env.ADMIN_USERNAME ?? 'admin';
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'Admin12345!';
   const adminHash = await argon2.hash(adminPassword);
@@ -93,7 +92,85 @@ async function main() {
   await ensureWallet(admin.id, BASE_ASSET, 'USER');
   await ensureWallet(admin.id, BASE_FIAT, 'USER');
 
-  // 3) Demo traders
+  const platformPms = [];
+  for (const p of [
+    { type: 'CARD' as const, bankName: 'Kaspi Bank', details: 'Kaspi · перевод' },
+    { type: 'CARD' as const, bankName: 'Halyk Bank', details: 'Halyk · карта' },
+    { type: 'CARD' as const, bankName: 'Visa', details: 'Visa · международная' },
+  ]) {
+    let pm = await prisma.paymentMethod.findFirst({
+      where: { userId: system.id, bankName: p.bankName },
+    });
+    if (!pm) {
+      pm = await prisma.paymentMethod.create({
+        data: {
+          userId: system.id,
+          type: p.type,
+          bankName: p.bankName,
+          holderName: 'NEXORA OTC',
+          details: p.details,
+          fiat: BASE_FIAT,
+          isActive: true,
+        },
+      });
+    }
+    platformPms.push(pm);
+  }
+
+  const personas = [
+    { username: 'alpha_trader', displayName: 'AlphaTrader', rating: '0.98', deals: 312 },
+    { username: 'crypto_king', displayName: 'CryptoKing', rating: '0.96', deals: 528 },
+    { username: 'safe_exchange', displayName: 'SafeExchange', rating: '0.99', deals: 891 },
+    { username: 'kzt_master', displayName: 'KZTMaster', rating: '0.97', deals: 156 },
+  ];
+
+  for (const p of personas) {
+    const persona = await prisma.user.upsert({
+      where: { username: p.username },
+      update: { personaRating: p.rating, personaDealsCount: p.deals },
+      create: {
+        username: p.username,
+        role: 'TRADER',
+        status: 'ACTIVE',
+        isPersona: true,
+        displayName: p.displayName,
+        personaRating: p.rating,
+        personaDealsCount: p.deals,
+        createdById: admin.id,
+      },
+    });
+    await ensureWallet(persona.id, BASE_ASSET, 'USER');
+    await creditUser(persona.id, BASE_ASSET, '50000');
+
+    const existingAd = await prisma.advertisement.findFirst({
+      where: { userId: persona.id, isPlatform: true },
+    });
+    if (!existingAd) {
+      await prisma.advertisement.create({
+        data: {
+          userId: persona.id,
+          side: 'SELL',
+          asset: BASE_ASSET,
+          fiat: BASE_FIAT,
+          isPlatform: true,
+          isFloating: false,
+          price: (499.5 + Math.random() * 2).toFixed(2),
+          totalAmount: '5000000',
+          availableAmount: '5000000',
+          minFiat: '10000',
+          maxFiat: '500000',
+          terms: 'Мгновенная обработка оператором NEXORA',
+          city: 'Алматы',
+          bankName: 'Kaspi / Halyk',
+          paymentWindowMin: 15,
+          paymentMethods: {
+            create: platformPms.map((pm) => ({ paymentMethodId: pm.id })),
+          },
+        },
+      });
+    }
+  }
+
   const demoPassword = 'Trader12345!';
   const demoHash = await argon2.hash(demoPassword);
   const traders = [
@@ -116,48 +193,51 @@ async function main() {
     });
     await ensureWallet(trader.id, BASE_ASSET, 'USER');
     await ensureWallet(trader.id, BASE_FIAT, 'USER');
-
-    // Give demo balances
     await creditUser(trader.id, BASE_ASSET, '5000');
     await creditUser(trader.id, BASE_FIAT, '500000');
 
-    // Payment method + sample ad
     const pm = await prisma.paymentMethod.create({
       data: {
         userId: trader.id,
         type: 'CARD',
-        bankName: 'Sber',
+        bankName: 'Kaspi Bank',
         holderName: t.displayName,
         details: '2202 2020 1111 2222',
         fiat: BASE_FIAT,
       },
     });
 
-    await prisma.advertisement.create({
-      data: {
-        userId: trader.id,
-        side: t.username === 'trader1' ? 'SELL' : 'BUY',
-        asset: BASE_ASSET,
-        fiat: BASE_FIAT,
-        isFloating: t.username === 'trader1',
-        price: t.username === 'trader1' ? null : '94.5',
-        floatingMargin: t.username === 'trader1' ? '0.015' : null,
-        totalAmount: '100000',
-        availableAmount: '100000',
-        minFiat: '1000',
-        maxFiat: '50000',
-        terms: 'Оплата в течение 15 минут. Только по указанным реквизитам.',
-        paymentWindowMin: 15,
-        paymentMethods: { create: [{ paymentMethodId: pm.id }] },
-      },
+    const hasUserAd = await prisma.advertisement.findFirst({
+      where: { userId: trader.id, isPlatform: false },
     });
+    if (!hasUserAd) {
+      await prisma.advertisement.create({
+        data: {
+          userId: trader.id,
+          side: t.username === 'trader1' ? 'BUY' : 'SELL',
+          asset: BASE_ASSET,
+          fiat: BASE_FIAT,
+          isPlatform: false,
+          isFloating: false,
+          price: t.username === 'trader1' ? '480' : '499.8',
+          totalAmount: t.username === 'trader1' ? '480000' : '250000',
+          availableAmount: t.username === 'trader1' ? '480000' : '250000',
+          minFiat: '10000',
+          maxFiat: '200000',
+          city: 'Алматы',
+          bankName: 'Kaspi Bank',
+          terms: 'OTC-заявка клиента — обрабатывается оператором',
+          paymentWindowMin: 30,
+          paymentMethods: { create: [{ paymentMethodId: pm.id }] },
+        },
+      });
+    }
   }
 
-  // 4) Default platform settings
   await prisma.systemSetting.upsert({
     where: { key: `rate:${BASE_ASSET}/${BASE_FIAT}` },
-    update: {},
-    create: { key: `rate:${BASE_ASSET}/${BASE_FIAT}`, value: process.env.RATE_STATIC_USDT_RUB ?? '95' },
+    update: { value: process.env.RATE_STATIC_USDT_KZT ?? '495' },
+    create: { key: `rate:${BASE_ASSET}/${BASE_FIAT}`, value: process.env.RATE_STATIC_USDT_KZT ?? '495' },
   });
 
   console.log('Seed complete.');

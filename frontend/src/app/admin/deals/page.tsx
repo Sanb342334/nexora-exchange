@@ -49,7 +49,7 @@ export default function AdminDealsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-200">
+                <tr className="border-b border-white/[0.07]">
                   <th className="th">Код</th>
                   <th className="th">Покупатель</th>
                   <th className="th">Продавец</th>
@@ -62,7 +62,7 @@ export default function AdminDealsPage() {
               </thead>
               <tbody>
                 {deals.map((d) => (
-                  <tr key={d.id} className="border-b border-surface-200/50">
+                  <tr key={d.id} className="border-b border-white/[0.07]/50">
                     <td className="td font-mono">{d.code}</td>
                     <td className="td">{d.buyer.username}</td>
                     <td className="td">{d.seller.username}</td>

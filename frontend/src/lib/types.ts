@@ -47,7 +47,13 @@ export interface Advertisement {
   maxFiat: string;
   terms?: string | null;
   paymentWindowMin: number;
-  user: { id: string; username: string; displayName?: string | null };
+  user: {
+    id: string;
+    username: string;
+    displayName?: string | null;
+    trustScore?: number | null;
+    completedDeals?: number | null;
+  };
   paymentMethods: { paymentMethod: PaymentMethod }[];
 }
 
@@ -72,6 +78,9 @@ export interface Deal {
   feeAmount: string;
   netAmount: string;
   paymentDeadline?: string | null;
+  otcStage?: string;
+  buyerAlias?: string | null;
+  sellerAlias?: string | null;
   buyer: { id: string; username: string; displayName?: string | null };
   seller: { id: string; username: string; displayName?: string | null };
   paymentMethod?: PaymentMethod | null;

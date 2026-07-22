@@ -75,7 +75,7 @@ export default function PaymentMethodsPage() {
           ) : (
             <div className="space-y-3">
               {methods.map((m) => (
-                <div key={m.id} className="flex items-center justify-between border border-surface-200 rounded-lg p-3">
+                <div key={m.id} className="flex items-center justify-between border border-white/[0.07] rounded-lg p-3">
                   <div>
                     <div className="text-sm font-medium">
                       {m.type} {m.bankName && `· ${m.bankName}`}

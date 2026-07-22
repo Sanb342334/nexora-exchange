@@ -13,14 +13,33 @@ import { UsersService } from '../users/users.service';
 import { RatesService } from '../rates/rates.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PlatformService } from '../platform/platform.service';
 import { D, roundFiat, round, toDb } from '../../common/money';
 import { CreateDealDto } from './dto/deal.dto';
 
 const dealInclude = {
-  buyer: { select: { id: true, username: true, displayName: true } },
-  seller: { select: { id: true, username: true, displayName: true } },
+  buyer: {
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      isPersona: true,
+      personaRating: true,
+      personaDealsCount: true,
+    },
+  },
+  seller: {
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      isPersona: true,
+      personaRating: true,
+      personaDealsCount: true,
+    },
+  },
   paymentMethod: true,
-  advertisement: { select: { id: true, side: true } },
+  advertisement: { select: { id: true, side: true, isPlatform: true } },
   dispute: true,
 } satisfies Prisma.DealInclude;
 
@@ -34,6 +53,7 @@ export class DealsService {
     private readonly rates: RatesService,
     private readonly notifications: NotificationsService,
     private readonly realtime: RealtimeGateway,
+    private readonly platform: PlatformService,
   ) {}
 
   private genCode(): string {
@@ -58,7 +78,7 @@ export class DealsService {
   async createFromAd(takerId: string, dto: CreateDealDto) {
     const ad = await this.prisma.advertisement.findUnique({
       where: { id: dto.advertisementId },
-      include: { paymentMethods: true },
+      include: { paymentMethods: true, user: { select: { isPersona: true, isSystem: true } } },
     });
     if (!ad) throw new NotFoundException('Объявление не найдено');
     if (ad.status !== 'ACTIVE') throw new BadRequestException('Объявление неактивно');
@@ -124,6 +144,8 @@ export class DealsService {
     }
 
     const windowMin = ad.paymentWindowMin;
+    const buyerAlias = this.platform.generateAlias();
+    const sellerAlias = this.platform.generateAlias();
 
     const deal = await this.prisma.$transaction(async (tx) => {
       // Lock the seller's crypto into escrow.
@@ -151,6 +173,8 @@ export class DealsService {
           netAmount: toDb(netAmount),
           paymentMethodId,
           paymentDeadline: new Date(Date.now() + windowMin * 60_000),
+          buyerAlias,
+          sellerAlias,
         },
         include: dealInclude,
       });
@@ -158,9 +182,51 @@ export class DealsService {
 
     await this.systemMessage(deal.id, `Сделка ${deal.code} создана. Крипта заблокирована в эскроу.`);
     await this.notifyBoth(deal.buyerId, deal.sellerId, 'DEAL', 'Новая сделка', `Сделка ${deal.code} создана`);
-    this.emitDeal(deal.id, 'deal:created', deal);
+    if (ad.isPlatform || ad.user.isPersona) {
+      await this.platform.notifyAdmins(
+        'Платформенная сделка',
+        `Новая сделка ${deal.code} — требуется сопровождение оператора`,
+      );
+      this.realtime.emitToAdmins('platform:deal', { dealId: deal.id, code: deal.code });
+    } else {
+      await this.platform.notifyAdmins(
+        'Новая OTC-сделка',
+        `Сделка ${deal.code} по заявке клиента — возьмите в работу`,
+      );
+    }
+    this.emitDeal(deal.id, 'deal:created', this.presentDeal(deal, takerId));
     this.realtime.emitOrderbook('orderbook:update', { action: 'deal', adId: ad.id });
-    return deal;
+    return this.presentDeal(deal, takerId);
+  }
+
+  private presentDeal<
+    T extends {
+      buyerId: string;
+      sellerId: string;
+      buyerAlias?: string | null;
+      sellerAlias?: string | null;
+      buyer: Parameters<PlatformService['sanitizePublicUser']>[0];
+      seller: Parameters<PlatformService['sanitizePublicUser']>[0];
+    },
+  >(deal: T, viewerId?: string, isAdmin = false) {
+    if (isAdmin) {
+      return {
+        ...deal,
+        buyer: this.platform.sanitizePublicUser(deal.buyer),
+        seller: this.platform.sanitizePublicUser(deal.seller),
+      };
+    }
+    let buyer = this.platform.sanitizePublicUser(deal.buyer);
+    let seller = this.platform.sanitizePublicUser(deal.seller);
+    if (viewerId === deal.buyerId) {
+      seller = this.platform.maskCounterparty(deal.seller, deal.sellerAlias);
+    } else if (viewerId === deal.sellerId) {
+      buyer = this.platform.maskCounterparty(deal.buyer, deal.buyerAlias);
+    } else if (viewerId) {
+      buyer = this.platform.maskCounterparty(deal.buyer, deal.buyerAlias);
+      seller = this.platform.maskCounterparty(deal.seller, deal.sellerAlias);
+    }
+    return { ...deal, buyer, seller };
   }
 
   async markPaid(userId: string, dealId: string) {
@@ -175,15 +241,29 @@ export class DealsService {
       include: dealInclude,
     });
     await this.systemMessage(dealId, 'Покупатель отметил оплату. Ожидается подтверждение продавца.');
-    await this.notifications.push(deal.sellerId, 'DEAL', 'Оплата отмечена', `Покупатель оплатил сделку ${deal.code}`);
-    this.emitDeal(dealId, 'deal:updated', updated);
-    return updated;
+    const seller = await this.prisma.user.findUnique({ where: { id: deal.sellerId } });
+    if (seller?.isPersona) {
+      await this.platform.notifyAdmins(
+        'Оплата по сделке',
+        `Покупатель оплатил сделку ${deal.code} — подтвердите и отпустите USDT`,
+      );
+      this.realtime.emitToAdmins('platform:paid', { dealId, code: deal.code });
+    } else {
+      await this.notifications.push(deal.sellerId, 'DEAL', 'Оплата отмечена', `Покупатель оплатил сделку ${deal.code}`);
+    }
+    this.emitDeal(dealId, 'deal:updated', this.presentDeal(updated, userId));
+    return this.presentDeal(updated, userId);
   }
 
   async release(userId: string, isAdmin: boolean, dealId: string) {
     const deal = await this.getRaw(dealId);
-    if (deal.sellerId !== userId && !isAdmin) {
+    const seller = await this.prisma.user.findUnique({ where: { id: deal.sellerId } });
+    const sellerIsPersona = seller?.isPersona ?? false;
+    if (deal.sellerId !== userId && !isAdmin && !sellerIsPersona) {
       throw new ForbiddenException('Только продавец может подтвердить сделку');
+    }
+    if (sellerIsPersona && !isAdmin) {
+      throw new ForbiddenException('Подтверждение платформенной сделки выполняет оператор');
     }
     if (!([DealStatus.PAID, DealStatus.CREATED] as DealStatus[]).includes(deal.status)) {
       throw new BadRequestException('Сделку нельзя подтвердить в текущем статусе');
@@ -215,9 +295,9 @@ export class DealsService {
 
     await this.systemMessage(dealId, `Сделка ${deal.code} завершена. Крипта переведена покупателю.`);
     await this.notifyBoth(deal.buyerId, deal.sellerId, 'DEAL', 'Сделка завершена', `Сделка ${deal.code} успешно завершена`);
-    this.emitDeal(dealId, 'deal:completed', updated);
+    this.emitDeal(dealId, 'deal:completed', this.presentDeal(updated, userId, isAdmin));
     this.emitBalances(deal.buyerId, deal.sellerId);
-    return updated;
+    return this.presentDeal(updated, userId, isAdmin);
   }
 
   async cancel(userId: string, isAdmin: boolean, dealId: string, reason?: string) {
@@ -368,16 +448,17 @@ export class DealsService {
     if (!isAdmin && deal.buyerId !== userId && deal.sellerId !== userId) {
       throw new ForbiddenException('Нет доступа к сделке');
     }
-    return deal;
+    return this.presentDeal(deal, userId, isAdmin);
   }
 
-  listMine(userId: string) {
-    return this.prisma.deal.findMany({
+  async listMine(userId: string) {
+    const deals = await this.prisma.deal.findMany({
       where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
       include: dealInclude,
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
+    return deals.map((d) => this.presentDeal(d, userId));
   }
 
   listAll(status?: DealStatus) {
@@ -436,8 +517,15 @@ export class DealsService {
     title: string,
     body: string,
   ) {
-    await this.notifications.push(a, type, title, body);
-    await this.notifications.push(b, type, title, body);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: [a, b] } },
+      select: { id: true, isPersona: true, isSystem: true },
+    });
+    for (const u of users) {
+      if (!u.isPersona && !u.isSystem) {
+        await this.notifications.push(u.id, type, title, body);
+      }
+    }
   }
 
   private async emitBalances(...userIds: string[]) {

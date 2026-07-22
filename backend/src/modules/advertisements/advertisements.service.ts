@@ -5,10 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AdSide, AdStatus, Prisma } from '@prisma/client';
+import { AdSide, AdStatus, DealStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RatesService } from '../rates/rates.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PlatformService } from '../platform/platform.service';
 import { D, toDb } from '../../common/money';
 import {
   CreateAdvertisementDto,
@@ -16,7 +17,16 @@ import {
 } from './dto/advertisement.dto';
 
 const adInclude = {
-  user: { select: { id: true, username: true, displayName: true } },
+  user: {
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      isPersona: true,
+      personaRating: true,
+      personaDealsCount: true,
+    },
+  },
   paymentMethods: { include: { paymentMethod: true } },
 } satisfies Prisma.AdvertisementInclude;
 
@@ -27,6 +37,7 @@ export class AdvertisementsService {
     private readonly config: ConfigService,
     private readonly rates: RatesService,
     private readonly realtime: RealtimeGateway,
+    private readonly platform: PlatformService,
   ) {}
 
   async create(userId: string, dto: CreateAdvertisementDto) {
@@ -40,12 +51,18 @@ export class AdvertisementsService {
       throw new BadRequestException('Для плавающей цены укажите floatingMargin');
     }
 
-    // Validate ownership of payment methods.
-    const methods = await this.prisma.paymentMethod.findMany({
-      where: { id: { in: dto.paymentMethodIds }, userId, isActive: true },
-    });
-    if (methods.length !== dto.paymentMethodIds.length) {
-      throw new BadRequestException('Указаны недоступные реквизиты');
+    // Validate payment methods when provided (required for SELL ads).
+    const pmIds = dto.paymentMethodIds ?? [];
+    if (dto.side === 'SELL' && pmIds.length === 0) {
+      throw new BadRequestException('Для продажи USDT укажите реквизиты');
+    }
+    if (pmIds.length > 0) {
+      const methods = await this.prisma.paymentMethod.findMany({
+        where: { id: { in: pmIds }, userId, isActive: true },
+      });
+      if (methods.length !== pmIds.length) {
+        throw new BadRequestException('Указаны недоступные реквизиты');
+      }
     }
 
     const ad = await this.prisma.advertisement.create({
@@ -53,7 +70,8 @@ export class AdvertisementsService {
         userId,
         side: dto.side,
         asset: dto.asset ?? this.config.get<string>('economics.baseAsset') ?? 'USDT',
-        fiat: dto.fiat ?? this.config.get<string>('economics.baseFiat') ?? 'RUB',
+        fiat: dto.fiat ?? this.config.get<string>('economics.baseFiat') ?? 'KZT',
+        isPlatform: false,
         isFloating: dto.isFloating ?? false,
         price: dto.price != null ? toDb(D(dto.price)) : null,
         floatingMargin: dto.floatingMargin != null ? toDb(D(dto.floatingMargin)) : null,
@@ -62,19 +80,58 @@ export class AdvertisementsService {
         minFiat: toDb(D(dto.minFiat)),
         maxFiat: toDb(D(dto.maxFiat)),
         terms: dto.terms,
+        city: dto.city,
+        bankName: dto.bankName,
         paymentWindowMin:
           dto.paymentWindowMin ??
           this.config.get<number>('economics.dealPaymentWindowMin') ??
           15,
-        paymentMethods: {
-          create: dto.paymentMethodIds.map((id) => ({ paymentMethodId: id })),
-        },
+        paymentMethods: pmIds.length
+          ? { create: pmIds.map((id) => ({ paymentMethodId: id })) }
+          : undefined,
       },
       include: adInclude,
     });
 
+    await this.platform.notifyAdmins(
+      'Новая заявка OTC',
+      `${dto.side === 'BUY' ? 'Покупка' : 'Продажа'} USDT — ${dto.totalAmount} ${dto.fiat ?? 'KZT'}`,
+    );
+    this.realtime.emitToAdmins('otc:new-ad', { adId: ad.id });
+
     this.realtime.emitOrderbook('orderbook:update', { action: 'create', adId: ad.id });
-    return this.withEffectivePrice(ad);
+    return this.presentAd(ad);
+  }
+
+  private async presentAd(ad: Prisma.AdvertisementGetPayload<{ include: typeof adInclude }>) {
+    const withPrice = await this.withEffectivePrice(ad);
+    return {
+      ...withPrice,
+      user: this.platform.sanitizePublicUser(ad.user),
+    };
+  }
+
+  async marketStats() {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [activeAds, deals24h, volumeAgg, users, onlineDeals] = await Promise.all([
+      this.prisma.advertisement.count({ where: { status: AdStatus.ACTIVE, isPlatform: true } }),
+      this.prisma.deal.count({ where: { createdAt: { gte: since } } }),
+      this.prisma.deal.aggregate({
+        where: { createdAt: { gte: since }, status: DealStatus.COMPLETED },
+        _sum: { fiatAmount: true },
+      }),
+      this.prisma.user.count({ where: { role: 'TRADER', status: 'ACTIVE', isPersona: false } }),
+      this.prisma.deal.count({
+        where: { status: { in: [DealStatus.CREATED, DealStatus.PAID, DealStatus.DISPUTED] } },
+      }),
+    ]);
+    return {
+      activeAds,
+      deals24h,
+      volume24h: volumeAgg._sum.fiatAmount?.toString() ?? '0',
+      users,
+      online: Math.max(onlineDeals, 1),
+    };
   }
 
   /** Resolve effective price for floating ads at read time. */
@@ -96,17 +153,19 @@ export class AdvertisementsService {
   }
 
   async list(filters: { side?: AdSide; asset?: string; fiat?: string; status?: AdStatus }) {
+    const platformOnly = this.platform.isPlatformOrderbookOnly();
     const ads = await this.prisma.advertisement.findMany({
       where: {
         side: filters.side,
         asset: filters.asset,
         fiat: filters.fiat,
         status: filters.status ?? AdStatus.ACTIVE,
+        ...(platformOnly ? { isPlatform: true } : {}),
       },
       include: adInclude,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ isPlatform: 'desc' }, { createdAt: 'desc' }],
     });
-    return Promise.all(ads.map((ad) => this.withEffectivePrice(ad)));
+    return Promise.all(ads.map((ad) => this.presentAd(ad)));
   }
 
   async listMine(userId: string) {
@@ -115,13 +174,13 @@ export class AdvertisementsService {
       include: adInclude,
       orderBy: { createdAt: 'desc' },
     });
-    return Promise.all(ads.map((ad) => this.withEffectivePrice(ad)));
+    return Promise.all(ads.map((ad) => this.presentAd(ad)));
   }
 
   async getById(id: string) {
     const ad = await this.prisma.advertisement.findUnique({ where: { id }, include: adInclude });
     if (!ad) throw new NotFoundException('Объявление не найдено');
-    return this.withEffectivePrice(ad);
+    return this.presentAd(ad);
   }
 
   async update(userId: string, isAdmin: boolean, id: string, dto: UpdateAdvertisementDto) {
@@ -142,6 +201,6 @@ export class AdvertisementsService {
       include: adInclude,
     });
     this.realtime.emitOrderbook('orderbook:update', { action: 'update', adId: id });
-    return this.withEffectivePrice(updated);
+    return this.presentAd(updated);
   }
 }

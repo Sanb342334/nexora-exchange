@@ -5,7 +5,12 @@ import { useParams } from 'next/navigation';
 import { apiGet, apiPost, ApiError } from '@/lib/api';
 import { getSocket, useSocketEvent } from '@/lib/socket';
 import { useAuth } from '@/lib/auth';
-import { Card, Spinner, Badge, Field, Modal } from '@/components/ui';
+import { Card, Spinner, Badge, Field, Modal, PageHeader } from '@/components/ui';
+import { PageMotion } from '@/components/nexora/PageMotion';
+import { RippleButton } from '@/components/nexora/RippleButton';
+import { DealTimeline } from '@/components/nexora/DealTimeline';
+import { TraderRow } from '@/components/nexora/TraderAvatar';
+import { useToast } from '@/components/nexora/ToastProvider';
 import {
   fmtCrypto,
   fmtFiat,
@@ -19,6 +24,7 @@ import type { ChatMessage, Deal } from '@/lib/types';
 export default function DealDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const toast = useToast();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [msg, setMsg] = useState('');
@@ -66,8 +72,11 @@ export default function DealDetailPage() {
     try {
       await apiPost(`/deals/${id}/${path}`, body);
       await load();
+      toast('success', 'Статус обновлён');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Ошибка');
+      const msg = err instanceof ApiError ? err.message : 'Ошибка';
+      setError(msg);
+      toast('error', msg);
     }
   };
 
@@ -87,16 +96,30 @@ export default function DealDetailPage() {
   const canCancel = isBuyer && deal.status === 'CREATED';
   const canDispute = (isBuyer || isSeller) && ['CREATED', 'PAID'].includes(deal.status);
 
+  const counterparty = isBuyer ? deal.seller : deal.buyer;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <PageMotion className="space-y-6">
+      <DealTimeline status={deal.status} />
+
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Сделка {deal.code}</h1>
-          <div className="text-sm text-gray-400">
-            Вы — {isBuyer ? 'покупатель' : 'продавец'} · {fmtDate(deal.createdAt)}
-          </div>
+          <PageHeader
+            title={`Сделка ${deal.code}`}
+            subtitle={`Вы — ${isBuyer ? 'покупатель' : 'продавец'}`}
+          />
+          <div className="text-sm text-nexora-muted -mt-4">{fmtDate(deal.createdAt)}</div>
         </div>
         <Badge className={dealStatusColor[deal.status]}>{dealStatusLabel[deal.status]}</Badge>
+      </div>
+
+      <div className="rounded-[14px] border border-white/[0.06] bg-[#10131C] p-4">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-nexora-muted mb-3">
+          Контрагент
+        </div>
+        <TraderRow
+          name={counterparty.displayName ?? counterparty.username}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -126,17 +149,17 @@ export default function DealDetailPage() {
           )}
 
           <Card title="Действия">
-            {error && <div className="text-sm text-red-400 mb-3">{error}</div>}
+            {error && <div className="text-sm text-nexora-error mb-3">{error}</div>}
             <div className="space-y-2">
               {canPay && (
-                <button onClick={() => action('paid')} className="btn-primary w-full">
+                <RippleButton variant="primary" onClick={() => action('paid')} className="w-full">
                   Я оплатил
-                </button>
+                </RippleButton>
               )}
               {canRelease && (
-                <button onClick={() => action('release')} className="btn-success w-full">
+                <RippleButton variant="success" onClick={() => action('release')} className="w-full">
                   Подтвердить и отпустить крипту
-                </button>
+                </RippleButton>
               )}
               {canCancel && (
                 <button onClick={() => action('cancel', { reason: 'Отменено покупателем' })} className="btn-secondary w-full">
@@ -149,29 +172,31 @@ export default function DealDetailPage() {
                 </button>
               )}
               {['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(deal.status) && (
-                <div className="text-sm text-gray-500 text-center py-2">Сделка закрыта</div>
+                <div className="text-sm text-nexora-muted text-center py-2">Сделка закрыта</div>
               )}
             </div>
           </Card>
         </div>
 
         <div className="lg:col-span-2">
-          <Card title="Чат сделки" className="flex flex-col h-[600px]">
-            <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+          <Card title="Чат сделки" className="flex flex-col h-[min(600px,70vh)]">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-2 scroll-smooth">
               {messages.map((m) => (
                 <ChatBubble key={m.id} m={m} isMine={m.senderId === user.id} />
               ))}
               <div ref={bottomRef} />
             </div>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex gap-2 border-t border-white/[0.06] pt-3">
               <input
-                className="input"
+                className="input flex-1"
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && send()}
-                placeholder="Сообщение..."
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
+                placeholder="Введите сообщение..."
               />
-              <button onClick={send} className="btn-primary">Отправить</button>
+              <RippleButton variant="primary" onClick={send}>
+                Отправить
+              </RippleButton>
             </div>
           </Card>
         </div>
@@ -198,15 +223,15 @@ export default function DealDetailPage() {
           </button>
         </div>
       </Modal>
-    </div>
+    </PageMotion>
   );
 }
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between">
-      <dt className="text-gray-400">{k}</dt>
-      <dd className="font-medium text-gray-100">{v}</dd>
+      <dt className="text-nexora-muted">{k}</dt>
+      <dd className="font-medium text-white">{v}</dd>
     </div>
   );
 }
@@ -215,7 +240,7 @@ function ChatBubble({ m, isMine }: { m: ChatMessage; isMine: boolean }) {
   if (m.isSystem) {
     return (
       <div className="text-center">
-        <span className="inline-block rounded-full bg-surface-200 px-3 py-1 text-xs text-gray-400">
+        <span className="inline-block rounded-full bg-white/[0.06] px-3 py-1 text-xs text-nexora-muted">
           {m.body}
         </span>
       </div>
@@ -223,13 +248,9 @@ function ChatBubble({ m, isMine }: { m: ChatMessage; isMine: boolean }) {
   }
   return (
     <div className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[70%] rounded-xl px-3 py-2 text-sm ${
-          isMine ? 'bg-brand text-black' : 'bg-surface-200 text-gray-100'
-        }`}
-      >
+      <div className={`max-w-[75%] ${isMine ? 'chat-bubble-mine' : 'chat-bubble-theirs'}`}>
         <div>{m.body}</div>
-        <div className={`text-[10px] mt-1 ${isMine ? 'text-black/60' : 'text-gray-500'}`}>
+        <div className={`text-[10px] mt-1.5 ${isMine ? 'text-white/50' : 'text-nexora-muted'}`}>
           {fmtDate(m.createdAt)}
         </div>
       </div>

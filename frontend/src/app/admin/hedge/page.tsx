@@ -56,7 +56,7 @@ export default function AdminHedgePage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Хеджирование (Bybit)</h1>
         <div className="text-sm text-gray-400">
-          Адаптер: <Badge className="bg-surface-200 text-gray-200">{adapter || '—'}</Badge>
+          Адаптер: <Badge className="bg-white/[0.06] text-nexora-text">{adapter || '—'}</Badge>
           {ticker && <span className="ml-3">Тикер: {ticker.price} ({ticker.source})</span>}
         </div>
       </div>
@@ -75,7 +75,7 @@ export default function AdminHedgePage() {
             ) : (
               <div className="space-y-2">
                 {hedges.map((h) => (
-                  <div key={h.id} className="border border-surface-200 rounded-lg p-3">
+                  <div key={h.id} className="border border-white/[0.07] rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="font-semibold">{h.side} {h.symbol}</span>

@@ -1,9 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import { apiGet, apiPost, apiPatch, ApiError } from '@/lib/api';
-import { Card, Spinner, Empty, Field, Badge, Modal } from '@/components/ui';
+import { Card, Spinner, Empty, Field, Badge, Modal, PageHeader } from '@/components/ui';
 import { fmtFiat } from '@/lib/format';
+import { PageMotion } from '@/components/nexora/PageMotion';
+import { RippleButton } from '@/components/nexora/RippleButton';
+import { staggerContainer, tableRow } from '@/lib/motion';
 import type { Advertisement, PaymentMethod } from '@/lib/types';
 
 export default function AdsPage() {
@@ -29,59 +33,70 @@ export default function AdsPage() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Мои объявления</h1>
-        <button onClick={() => setOpen(true)} className="btn-primary">+ Создать объявление</button>
-      </div>
+    <PageMotion className="space-y-6">
+      <PageHeader
+        title="Мои объявления"
+        subtitle="Создавайте и управляйте P2P-объявлениями"
+        action={
+          <RippleButton variant="primary" onClick={() => setOpen(true)}>
+            + Создать объявление
+          </RippleButton>
+        }
+      />
 
-      <Card>
+      <Card noPadding>
         {ads.length === 0 ? (
           <Empty text="Объявлений нет" />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-200">
+                <tr>
                   <th className="th">Тип</th>
                   <th className="th">Цена</th>
                   <th className="th">Доступно</th>
                   <th className="th">Лимиты</th>
                   <th className="th">Статус</th>
-                  <th className="th"></th>
+                  <th className="th text-right pr-6">Действие</th>
                 </tr>
               </thead>
-              <tbody>
+              <motion.tbody variants={staggerContainer} initial="hidden" animate="visible">
                 {ads.map((ad) => (
-                  <tr key={ad.id} className="border-b border-surface-200/50">
+                  <motion.tr
+                    key={ad.id}
+                    variants={tableRow}
+                    whileHover={{ backgroundColor: 'rgba(123,97,255,0.04)' }}
+                  >
                     <td className="td">
-                      <Badge className={ad.side === 'SELL' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}>
+                      <Badge className={ad.side === 'SELL' ? 'bg-nexora-error/15 text-nexora-error border border-nexora-error/20' : 'bg-[#4CAF50]/15 text-[#4CAF50] border border-[#4CAF50]/20'}>
                         {ad.side === 'SELL' ? 'Продажа' : 'Покупка'}
                       </Badge>
                     </td>
-                    <td className="td">{fmtFiat(ad.effectivePrice)} {ad.fiat}{ad.isFloating && ' (плав.)'}</td>
+                    <td className="td font-bold text-[#4CAF50]">
+                      {fmtFiat(ad.effectivePrice)} {ad.fiat}{ad.isFloating && ' (плав.)'}
+                    </td>
                     <td className="td">{fmtFiat(ad.availableAmount)}</td>
-                    <td className="td text-gray-400">{fmtFiat(ad.minFiat)}–{fmtFiat(ad.maxFiat)}</td>
+                    <td className="td text-nexora-muted">{fmtFiat(ad.minFiat)} – {fmtFiat(ad.maxFiat)}</td>
                     <td className="td">
-                      <Badge className={ad.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-500/20 text-gray-400'}>
+                      <Badge className={ad.status === 'ACTIVE' ? 'bg-[#4CAF50]/15 text-[#4CAF50] border border-[#4CAF50]/20' : 'bg-white/[0.06] text-nexora-muted border border-white/[0.08]'}>
                         {ad.status}
                       </Badge>
                     </td>
-                    <td className="td">
-                      <button onClick={() => toggle(ad)} className="text-brand text-xs">
+                    <td className="td text-right pr-6">
+                      <RippleButton variant="outline" onClick={() => toggle(ad)}>
                         {ad.status === 'ACTIVE' ? 'Пауза' : 'Активировать'}
-                      </button>
+                      </RippleButton>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
         )}
       </Card>
 
       {open && <CreateAdModal methods={methods} onClose={() => setOpen(false)} onDone={() => { setOpen(false); load(); }} />}
-    </div>
+    </PageMotion>
   );
 }
 
@@ -102,6 +117,9 @@ function CreateAdModal({
   const [minFiat, setMinFiat] = useState('');
   const [maxFiat, setMaxFiat] = useState('');
   const [terms, setTerms] = useState('');
+  const [city, setCity] = useState('Алматы');
+  const [bankName, setBankName] = useState('Kaspi Bank');
+  const [fiat] = useState('KZT');
   const [pmIds, setPmIds] = useState<string[]>([]);
   const [error, setError] = useState('');
 
@@ -110,6 +128,7 @@ function CreateAdModal({
     try {
       await apiPost('/advertisements', {
         side,
+        fiat,
         isFloating,
         price: isFloating ? undefined : parseFloat(price),
         floatingMargin: isFloating ? parseFloat(floatingMargin) : undefined,
@@ -117,7 +136,9 @@ function CreateAdModal({
         minFiat: parseFloat(minFiat),
         maxFiat: parseFloat(maxFiat),
         terms,
-        paymentMethodIds: pmIds,
+        city,
+        bankName,
+        paymentMethodIds: pmIds.length ? pmIds : undefined,
       });
       onDone();
     } catch (err) {
@@ -126,8 +147,9 @@ function CreateAdModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Новое объявление">
+    <Modal open onClose={onClose} title="OTC-заявка">
       <div className="space-y-3">
+        <p className="text-xs text-nexora-muted">Заявка попадёт к оператору NEXORA. Контрагент увидит случайный ник.</p>
         <Field label="Тип">
           <select className="input" value={side} onChange={(e) => setSide(e.target.value)}>
             <option value="SELL">Продажа USDT</option>
@@ -143,25 +165,33 @@ function CreateAdModal({
             <input className="input" type="number" step="0.001" value={floatingMargin} onChange={(e) => setFloatingMargin(e.target.value)} />
           </Field>
         ) : (
-          <Field label="Фиксированная цена (RUB за 1 USDT)">
-            <input className="input" type="number" value={price} onChange={(e) => setPrice(e.target.value)} />
+          <Field label={`Фиксированная цена (${fiat} за 1 USDT)`}>
+            <input className="input" type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="480" />
           </Field>
         )}
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Город">
+            <input className="input" value={city} onChange={(e) => setCity(e.target.value)} />
+          </Field>
+          <Field label="Банк">
+            <input className="input" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+          </Field>
+        </div>
         <div className="grid grid-cols-3 gap-2">
-          <Field label="Объём (RUB)">
+          <Field label={`Объём (${fiat})`}>
             <input className="input" type="number" value={totalAmount} onChange={(e) => setTotalAmount(e.target.value)} />
           </Field>
-          <Field label="Мин (RUB)">
+          <Field label={`Мин (${fiat})`}>
             <input className="input" type="number" value={minFiat} onChange={(e) => setMinFiat(e.target.value)} />
           </Field>
-          <Field label="Макс (RUB)">
+          <Field label={`Макс (${fiat})`}>
             <input className="input" type="number" value={maxFiat} onChange={(e) => setMaxFiat(e.target.value)} />
           </Field>
         </div>
         <Field label="Условия">
           <textarea className="input" value={terms} onChange={(e) => setTerms(e.target.value)} />
         </Field>
-        <Field label="Реквизиты">
+        <Field label={side === 'SELL' ? 'Реквизиты (обязательно для продажи)' : 'Реквизиты (опционально)'}>
           <div className="space-y-1">
             {methods.filter((m) => m.isActive).map((m) => (
               <label key={m.id} className="flex items-center gap-2 text-sm">
@@ -175,11 +205,13 @@ function CreateAdModal({
                 {m.type} · {m.bankName} · {m.details}
               </label>
             ))}
-            {methods.length === 0 && <div className="text-xs text-gray-500">Сначала добавьте реквизиты</div>}
+            {methods.length === 0 && <div className="text-xs text-nexora-muted">Сначала добавьте реквизиты</div>}
           </div>
         </Field>
-        {error && <div className="text-sm text-red-400">{error}</div>}
-        <button onClick={submit} className="btn-primary w-full">Опубликовать</button>
+        {error && <div className="text-sm text-nexora-error">{error}</div>}
+        <RippleButton variant="primary" onClick={submit} className="w-full">
+          Опубликовать
+        </RippleButton>
       </div>
     </Modal>
   );

@@ -34,7 +34,7 @@ export default function AdminUsersPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-200">
+                <tr className="border-b border-white/[0.07]">
                   <th className="th">Логин</th>
                   <th className="th">Имя</th>
                   <th className="th">Статус</th>
@@ -45,7 +45,7 @@ export default function AdminUsersPage() {
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <tr key={u.id} className="border-b border-surface-200/50">
+                  <tr key={u.id} className="border-b border-white/[0.07]/50">
                     <td className="td font-mono">@{u.username}</td>
                     <td className="td">{u.displayName ?? '—'}</td>
                     <td className="td">
@@ -56,7 +56,7 @@ export default function AdminUsersPage() {
                     <td className="td">{u.maxOpenDeals}</td>
                     <td className="td text-gray-400">{fmtDate(u.createdAt)}</td>
                     <td className="td">
-                      <button onClick={() => setManage(u)} className="text-brand text-xs">Управление</button>
+                      <button onClick={() => setManage(u)} className="text-nexora-accent text-xs">Управление</button>
                     </td>
                   </tr>
                 ))}
@@ -175,7 +175,7 @@ function ManageUserModal({ user, onClose, onDone }: { user: User; onClose: () =>
         </div>
         <button onClick={save} className="btn-primary w-full">Сохранить настройки</button>
 
-        <hr className="border-surface-200" />
+        <hr className="border-white/[0.07]" />
         <div className="text-sm font-semibold">Ручная корректировка баланса</div>
         <div className="grid grid-cols-3 gap-2 items-end">
           <Field label="Валюта">
@@ -188,7 +188,7 @@ function ManageUserModal({ user, onClose, onDone }: { user: User; onClose: () =>
           <button onClick={adjust} className="btn-secondary">Применить</button>
         </div>
 
-        <hr className="border-surface-200" />
+        <hr className="border-white/[0.07]" />
         <div className="flex gap-2">
           <input className="input" placeholder="Новый пароль" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           <button onClick={resetPass} className="btn-secondary">Сбросить пароль</button>

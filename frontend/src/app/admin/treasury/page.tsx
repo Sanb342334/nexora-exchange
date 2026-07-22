@@ -56,7 +56,7 @@ export default function AdminTreasuryPage() {
         ) : (
           <div className="space-y-2">
             {deposits.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border border-surface-200 rounded-lg p-3">
+              <div key={r.id} className="flex items-center justify-between border border-white/[0.07] rounded-lg p-3">
                 <div>
                   <div className="text-sm font-medium">
                     @{r.user.username} · <span className="text-emerald-400">+{fmtCrypto(r.amount)} {r.currency}</span>
@@ -79,7 +79,7 @@ export default function AdminTreasuryPage() {
         ) : (
           <div className="space-y-2">
             {withdrawals.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border border-surface-200 rounded-lg p-3">
+              <div key={r.id} className="flex items-center justify-between border border-white/[0.07] rounded-lg p-3">
                 <div>
                   <div className="text-sm font-medium">
                     @{r.user.username} · <span className="text-red-400">-{fmtCrypto(r.amount)} {r.currency}</span>

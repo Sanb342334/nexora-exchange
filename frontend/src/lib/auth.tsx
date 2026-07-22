@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     tokenStore.set(res.accessToken, res.refreshToken);
     setUser(res.user);
-    router.push(res.user.role === 'ADMIN' ? '/admin' : '/dashboard');
+    router.push(res.user.role === 'ADMIN' ? '/admin' : '/market');
   };
 
   const logout = () => {

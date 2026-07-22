@@ -1,5 +1,5 @@
-import { AppShell } from '@/components/AppShell';
+import { AdminShell } from '@/components/nexora/AdminShell';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell role="ADMIN">{children}</AppShell>;
+  return <AdminShell>{children}</AdminShell>;
 }

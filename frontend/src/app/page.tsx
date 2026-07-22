@@ -12,7 +12,7 @@ export default function Home() {
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace('/login');
-    else router.replace(user.role === 'ADMIN' ? '/admin' : '/dashboard');
+    else router.replace(user.role === 'ADMIN' ? '/admin' : '/market');
   }, [user, loading, router]);
 
   return <Spinner />;

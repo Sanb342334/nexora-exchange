@@ -41,11 +41,11 @@ export const dealStatusLabel: Record<string, string> = {
 };
 
 export const dealStatusColor: Record<string, string> = {
-  CREATED: 'bg-yellow-500/20 text-yellow-400',
-  PAID: 'bg-blue-500/20 text-blue-400',
-  RELEASED: 'bg-emerald-500/20 text-emerald-400',
-  COMPLETED: 'bg-emerald-500/20 text-emerald-400',
-  CANCELLED: 'bg-gray-500/20 text-gray-400',
-  EXPIRED: 'bg-gray-500/20 text-gray-400',
-  DISPUTED: 'bg-red-500/20 text-red-400',
+  CREATED: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20',
+  PAID: 'bg-blue-500/15 text-blue-400 border border-blue-500/20',
+  RELEASED: 'bg-nexora-success/15 text-nexora-success border border-nexora-success/20',
+  COMPLETED: 'bg-nexora-success/15 text-nexora-success border border-nexora-success/20',
+  CANCELLED: 'bg-white/5 text-nexora-muted border border-white/10',
+  EXPIRED: 'bg-white/5 text-nexora-muted border border-white/10',
+  DISPUTED: 'bg-nexora-error/15 text-nexora-error border border-nexora-error/20',
 };

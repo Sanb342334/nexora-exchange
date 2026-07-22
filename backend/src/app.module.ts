@@ -19,6 +19,7 @@ import { ExchangeModule } from './modules/exchange/exchange.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { OtcModule } from './modules/otc/otc.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AdminModule } from './modules/admin/admin.module';
     DealsModule,
     TreasuryModule,
     AdminModule,
+    OtcModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

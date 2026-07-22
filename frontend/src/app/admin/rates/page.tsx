@@ -62,7 +62,7 @@ export default function AdminRatesPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title="Текущий курс USDT/RUB">
-          <div className="text-4xl font-bold text-brand">{market ? fmtFiat(market.price) : '—'}</div>
+          <div className="text-4xl font-bold text-nexora-accent">{market ? fmtFiat(market.price) : '—'}</div>
           <div className="text-sm text-gray-400 mt-1">Источник: {market?.source ?? '—'}</div>
 
           <div className="mt-6 space-y-3">
@@ -84,7 +84,7 @@ export default function AdminRatesPage() {
           ) : (
             <div className="max-h-96 overflow-y-auto space-y-1">
               {history.map((s) => (
-                <div key={s.id} className="flex justify-between text-sm border-b border-surface-200/50 py-1.5">
+                <div key={s.id} className="flex justify-between text-sm border-b border-white/[0.07] py-1.5">
                   <span className="text-gray-400">{fmtDate(s.createdAt)}</span>
                   <span>{fmtFiat(s.price)} <span className="text-gray-500 text-xs">({s.source})</span></span>
                 </div>

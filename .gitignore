@@ -38,3 +38,4 @@ tmp/
 
 # Docker volumes
 .docker-data/
+backend/.pgdata/

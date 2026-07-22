@@ -54,13 +54,21 @@ export class CreateAdvertisementDto {
   terms?: string;
 
   @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  bankName?: string;
+
+  @IsOptional()
   @IsNumber()
   paymentWindowMin?: number;
 
+  @IsOptional()
   @IsArray()
-  @ArrayNotEmpty()
   @IsString({ each: true })
-  paymentMethodIds!: string[];
+  paymentMethodIds?: string[];
 }
 
 export class UpdateAdvertisementDto {

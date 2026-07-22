@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { AdSide, AdStatus } from '@prisma/client';
+import { Public } from '../../common/decorators/public.decorator';
 import { AdvertisementsService } from './advertisements.service';
 import {
   CreateAdvertisementDto,
@@ -24,6 +25,12 @@ export class AdvertisementsController {
     @Query('status') status?: AdStatus,
   ) {
     return this.ads.list({ side, asset, fiat, status });
+  }
+
+  @Get('stats/market')
+  @Public()
+  marketStats() {
+    return this.ads.marketStats();
   }
 
   @Get('mine')

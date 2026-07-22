@@ -45,6 +45,15 @@ enum LedgerTxType {
   HEDGE_SETTLEMENT
 }
 
+enum OtcStage {
+  NEW
+  ORDER_FOUND
+  EXECUTING
+  PAYMENT_CONFIRMED
+  USDT_SENT
+  COMPLETED
+}
+
 enum AdSide {
   BUY // advertiser wants to BUY crypto (pays fiat)
   SELL // advertiser wants to SELL crypto (receives fiat)
@@ -122,6 +131,9 @@ model User {
   role         UserRole   @default(TRADER)
   status       UserStatus @default(ACTIVE)
   isSystem     Boolean    @default(false)
+  isPersona    Boolean    @default(false) // synthetic P2P counterparty (no login)
+  personaRating Decimal?  @db.Decimal(5, 4) // e.g. 0.9800 = 98% trust
+  personaDealsCount Int   @default(0)
 
   displayName String?
   telegram    String?
@@ -155,6 +167,8 @@ model User {
   withdrawalRequests WithdrawalRequest[]
   notifications     Notification[]
   auditLogs         AuditLog[]
+  assignedAds       Advertisement[] @relation("AdOperator")
+  assignedDeals     Deal[]          @relation("DealOperator")
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -271,6 +285,7 @@ model Advertisement {
   asset  String   @default("USDT")
   fiat   String   @default("RUB")
   status AdStatus @default(ACTIVE)
+  isPlatform Boolean @default(false) // shown in public orderbook; house-backed
 
   // Pricing: either a fixed price or a floating margin over market rate
   isFloating   Boolean  @default(false)
@@ -284,7 +299,19 @@ model Advertisement {
   maxFiat        Decimal @db.Decimal(30, 10)
 
   terms          String?
+  city           String?
+  bankName       String?
   paymentWindowMin Int   @default(15)
+
+  // OTC operator workflow (admin fulfills user request)
+  assignedOperatorId String?
+  assignedOperator   User?     @relation("AdOperator", fields: [assignedOperatorId], references: [id])
+  takenAt            DateTime?
+  otcStage           OtcStage  @default(NEW)
+  externalOrderUrl   String?
+  externalBuyPrice   Decimal?  @db.Decimal(30, 10)
+  externalSellPrice  Decimal?  @db.Decimal(30, 10)
+  expectedProfit     Decimal?  @db.Decimal(30, 10)
 
   paymentMethods AdPaymentMethod[]
   deals          Deal[]
@@ -343,6 +370,19 @@ model Deal {
   completedAt     DateTime?
   cancelledAt     DateTime?
   cancelReason    String?
+
+  // Random nicknames shown to counterparty (OTC illusion)
+  buyerAlias  String?
+  sellerAlias String?
+
+  assignedOperatorId String?
+  assignedOperator   User?     @relation("DealOperator", fields: [assignedOperatorId], references: [id])
+  takenAt            DateTime?
+  otcStage           OtcStage  @default(NEW)
+  externalOrderUrl   String?
+  externalBuyPrice   Decimal?  @db.Decimal(30, 10)
+  externalSellPrice  Decimal?  @db.Decimal(30, 10)
+  expectedProfit     Decimal?  @db.Decimal(30, 10)
 
   chatMessages ChatMessage[]
   dispute      Dispute?
