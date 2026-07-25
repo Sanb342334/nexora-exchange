@@ -1,0 +1,36 @@
+thresholds:
+  volume_spike_ratio: 4.0
+  oi_jump_pct: 2.5
+  price_vol_pct: 3.0
+  min_score: 70
+  max_spread_pct: 0.15
+  btc_correlation_pct: 1.0
+  funding_extreme_pct: 0.05
+
+scoring:
+  volume_weight: 30
+  oi_weight: 25
+  price_weight: 25
+  orderflow_weight: 10
+  btc_decouple_weight: 10
+
+symbols:
+  BTCUSDT:
+    price_vol_pct: 1.5
+    volume_spike_ratio: 3.0
+  ETHUSDT:
+    price_vol_pct: 2.0
+    volume_spike_ratio: 3.5
+
+blacklist: []
+whitelist: []
+
+paper:
+  enabled: true
+  slippage_pct: 0.05
+  tp_atr_mult: 2.0
+  sl_atr_mult: 1.0
+
+digest:
+  enabled: true
+  interval_min: 60
