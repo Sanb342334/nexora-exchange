@@ -155,6 +155,59 @@ Bybit WS  ──► kline + tickers + trades + liquidations
            ──► health monitor
 ```
 
+## Deploy on Railway
+
+Сканер — **worker-сервис** (без HTTP-порта). Railway держит процесс постоянно запущенным.
+
+### 1. Создай проект
+
+1. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
+2. Выбери репозиторий: `test2123123-nexora-p2p-exchange-platform`
+3. **Settings → Root Directory** → `bybit-scanner`
+4. Railway подхватит `Dockerfile` и `railway.toml` автоматически
+
+### 2. Variables (Settings → Variables)
+
+| Variable | Value |
+|----------|-------|
+| `TELEGRAM_BOT_TOKEN` | токен от @BotFather |
+| `DRY_RUN` | `false` |
+| `MIN_VOLUME_24H` | `10000000` |
+| `ALERT_COOLDOWN_MIN` | `10` |
+| `LOG_DIR` | `/app/logs` |
+| `CONFIG_PATH` | `/app/config.yaml` |
+
+`TELEGRAM_CHAT_ID` — опционально (auto-subscribe админа).
+
+### 3. Volume (важно для подписчиков)
+
+**Settings → Volumes → Add Volume**
+
+- Mount path: `/app/logs`
+
+Без volume список подписчиков (`subscribers.json`) сбросится при каждом redeploy.
+
+### 4. Deploy
+
+Push в `main` → Railway автоматически пересобирает.  
+Или **Deploy → Redeploy** вручную.
+
+### 5. Проверка
+
+1. **Deployments → View Logs** — должно быть `bybit pump/dump scanner started`
+2. Telegram → `/start` → **🧪 Тестовый сигнал**
+
+### Railway CLI (опционально)
+
+```bash
+npm i -g @railway/cli
+railway login
+railway link
+cd bybit-scanner
+railway up
+railway variables set TELEGRAM_BOT_TOKEN=xxx DRY_RUN=false
+```
+
 ## License
 
 MIT
