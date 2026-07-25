@@ -1,14 +1,21 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { PaymentMethodsService } from './payment-methods.service';
 import {
   CreatePaymentMethodDto,
   UpdatePaymentMethodDto,
 } from './dto/payment-method.dto';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 
 @Controller('payment-methods')
 export class PaymentMethodsController {
   constructor(private readonly service: PaymentMethodsService) {}
+
+  @Public()
+  @Get('catalog')
+  catalog(@Query('fiat') fiat?: string) {
+    return this.service.catalog(fiat ?? 'KZT');
+  }
 
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreatePaymentMethodDto) {

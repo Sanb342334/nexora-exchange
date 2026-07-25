@@ -38,7 +38,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
-    if (!loading && user && user.role !== 'ADMIN') router.replace('/market');
+    if (!loading && user && user.role !== 'ADMIN') router.replace('/trade');
   }, [loading, user, router]);
 
   if (loading || !user) return <Spinner />;

@@ -8,7 +8,16 @@ import type { User } from './types';
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string, totpCode?: string) => Promise<void>;
+  login: (username: string, password: string, totpCode?: string) => Promise<User>;
+  register: (payload: {
+    username: string;
+    password: string;
+    email?: string;
+    countryCode: string;
+    preferredFiat: string;
+    locale?: string;
+    displayName?: string;
+  }) => Promise<User>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -30,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await apiGet<User>('/auth/me');
       setUser(me);
     } catch {
+      tokenStore.clear();
       setUser(null);
     } finally {
       setLoading(false);
@@ -48,7 +58,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     tokenStore.set(res.accessToken, res.refreshToken);
     setUser(res.user);
-    router.push(res.user.role === 'ADMIN' ? '/admin' : '/market');
+    if (res.user.locale) {
+      try { localStorage.setItem('nexora-locale', res.user.locale); } catch { /* ignore */ }
+    }
+    return res.user;
+  };
+
+  const register = async (payload: {
+    username: string;
+    password: string;
+    email?: string;
+    countryCode: string;
+    preferredFiat: string;
+    locale?: string;
+    displayName?: string;
+  }) => {
+    const res = await apiPost<{ accessToken: string; refreshToken: string; user: User }>(
+      '/auth/register',
+      payload,
+    );
+    tokenStore.set(res.accessToken, res.refreshToken);
+    setUser(res.user);
+    if (res.user.locale) {
+      try { localStorage.setItem('nexora-locale', res.user.locale); } catch { /* ignore */ }
+    }
+    return res.user;
   };
 
   const logout = () => {
@@ -60,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

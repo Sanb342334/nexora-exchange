@@ -2,30 +2,34 @@
 
 import { useEffect, useState } from 'react';
 import { apiGet } from '@/lib/api';
-import { fmtFiat } from '@/lib/format';
+import { useFormat } from '@/lib/use-format';
 
-export function LiveTicker() {
+export function LiveTicker({ fiat = 'KZT' }: { fiat?: string }) {
+  const { fmtNum } = useFormat();
   const [price, setPrice] = useState<number | null>(null);
 
   useEffect(() => {
-    const load = () => apiGet<{ price: number }>('/rates/market').then((r) => setPrice(r.price)).catch(() => {});
+    const load = () =>
+      apiGet<{ price: number }>(`/rates/market?asset=USDT&fiat=${encodeURIComponent(fiat)}`)
+        .then((r) => setPrice(r.price))
+        .catch(() => {});
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [fiat]);
 
   const items = [
-    { label: 'USDT/KZT', val: price ? fmtFiat(price) : '—', up: true },
-    { label: 'BTC', val: '67,842', up: true },
-    { label: 'ETH', val: '3,521', up: true },
+    { label: `USDT/${fiat}`, val: price ? fmtNum(price) : '—', up: true },
+    { label: 'BTC/USDT', val: '67,842', up: true },
+    { label: 'ETH/USDT', val: '3,521', up: true },
   ];
 
   return (
-    <div className="hidden lg:flex items-center gap-6 border-b border-white/[0.04] bg-[#080A10] px-6 py-1.5 text-[11px]">
+    <div className="hidden lg:flex items-center gap-6 border-b border-nexora-border bg-[var(--nexora-ticker-bg)] px-6 py-1.5 text-[11px]">
       {items.map((i) => (
         <div key={i.label} className="flex items-center gap-2 tabular-nums">
           <span className="text-nexora-muted">{i.label}</span>
-          <span className="font-semibold text-white">{i.val}</span>
+          <span className="font-semibold text-nexora-text">{i.val}</span>
           <span className={i.up ? 'text-nexora-neon' : 'text-nexora-error'}>{i.up ? '▲' : '▼'}</span>
         </div>
       ))}

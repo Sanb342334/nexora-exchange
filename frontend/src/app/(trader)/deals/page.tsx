@@ -76,7 +76,7 @@ export default function DealsPage() {
                   <motion.tr
                     key={d.id}
                     variants={tableRow}
-                    whileHover={{ backgroundColor: 'rgba(123,97,255,0.04)' }}
+                    className="hover:bg-[rgba(123,92,255,0.04)]"
                   >
                     <td className="td font-mono text-nexora-accent">{d.code}</td>
                     <td className="td font-semibold text-white">

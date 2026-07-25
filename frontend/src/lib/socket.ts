@@ -4,7 +4,13 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { tokenStore } from './api';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:4000';
+function resolveWsUrl() {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== 'undefined') return window.location.origin;
+  return 'http://localhost:4000';
+}
+
+const WS_URL = resolveWsUrl();
 
 let socket: Socket | null = null;
 

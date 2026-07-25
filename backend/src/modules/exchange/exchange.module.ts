@@ -5,6 +5,7 @@ import { ExchangeController } from './exchange.controller';
 import { EXCHANGE_ADAPTER, IExchangeAdapter } from './exchange-adapter.interface';
 import { MockExchangeAdapter } from './adapters/mock.adapter';
 import { BybitExchangeAdapter } from './adapters/bybit.adapter';
+import { MOCK_USDT_FIAT_RATES } from '../../common/mock-fiat-rates';
 
 @Global()
 @Module({
@@ -23,7 +24,8 @@ import { BybitExchangeAdapter } from './adapters/bybit.adapter';
             testnet: config.get<boolean>('exchange.bybitTestnet') ?? true,
           });
         }
-        return new MockExchangeAdapter(config.get<number>('rates.staticUsdtRub') ?? 95);
+        const kzt = config.get<number>('rates.staticUsdtKzt') ?? 470;
+        return new MockExchangeAdapter({ ...MOCK_USDT_FIAT_RATES, USDTKZT: kzt });
       },
     },
   ],

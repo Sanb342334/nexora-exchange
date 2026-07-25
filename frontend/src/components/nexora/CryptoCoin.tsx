@@ -24,8 +24,8 @@ const presets = {
   nexora: {
     label: 'N',
     ring: 'from-[#7B61FF] via-[#9D8AFF] to-[#6F3DFF]',
-    face: 'bg-nexora-gradient',
-    glow: 'rgba(123,97,255,0.55)',
+    face: 'bg-gradient-to-br from-[#1a1528] via-[#12101c] to-[#0b0e14]',
+    glow: 'rgba(123,97,255,0.65)',
   },
   bnb: {
     label: 'B',
@@ -57,21 +57,45 @@ export function CryptoCoin({
         style={{ background: p.glow, transform: `scale(${hero ? 1.35 : 1.15})` }}
       />
       <div
-        className={`absolute inset-0 rounded-full bg-gradient-to-br ${p.ring} ${ringPad} ${hero ? 'shadow-[0_0_30px_rgba(247,147,26,0.5)]' : 'shadow-lg'}`}
+        className={`absolute inset-0 rounded-full bg-gradient-to-br ${p.ring} ${ringPad} ${
+          hero
+            ? kind === 'nexora'
+              ? 'shadow-[0_0_40px_rgba(123,97,255,0.55),0_0_80px_rgba(123,97,255,0.25)]'
+              : 'shadow-[0_0_30px_rgba(247,147,26,0.5)]'
+            : 'shadow-lg'
+        }`}
         style={{ transformStyle: 'preserve-3d' }}
       >
         <div
-          className={`flex h-full w-full items-center justify-center rounded-full ${p.face} border ${hero ? 'border-amber-200/40' : 'border-white/20'}`}
+          className={`flex h-full w-full items-center justify-center rounded-full ${p.face} border ${
+            hero && kind === 'nexora'
+              ? 'border-nexora-accent/50'
+              : hero
+                ? 'border-amber-200/40'
+                : 'border-white/20'
+          }`}
         >
           <span
-            className={`font-display font-black drop-shadow-md ${hero && kind === 'btc' ? 'text-amber-50' : 'text-white'}`}
-            style={{ fontSize: size * (hero ? 0.42 : 0.38) }}
+            className={`font-display font-black drop-shadow-md ${
+              hero && kind === 'nexora'
+                ? 'text-transparent bg-clip-text bg-gradient-to-b from-[#E8E0FF] to-[#7B61FF]'
+                : hero && kind === 'btc'
+                  ? 'text-amber-50'
+                  : 'text-white'
+            }`}
+            style={{ fontSize: size * (hero ? 0.44 : 0.38) }}
           >
             {p.label}
           </span>
         </div>
       </div>
       <div className={`absolute inset-x-[15%] top-[6%] rounded-full bg-white/30 blur-[2px] ${hero ? 'h-[28%]' : 'h-[22%]'}`} />
+      {hero && kind === 'nexora' && (
+        <>
+          <div className="absolute inset-[10%] rounded-full border border-nexora-accent/30 pointer-events-none" />
+          <div className="absolute inset-[18%] rounded-full border border-white/[0.06] pointer-events-none" />
+        </>
+      )}
       {hero && kind === 'btc' && (
         <div className="absolute inset-[12%] rounded-full border border-amber-300/20 pointer-events-none" />
       )}

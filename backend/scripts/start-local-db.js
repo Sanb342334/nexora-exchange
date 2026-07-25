@@ -2,14 +2,14 @@
 const EmbeddedPostgres = require('embedded-postgres').default;
 const path = require('path');
 
-const DB_DIR = path.join(__dirname, '..', '.pgdata');
+const DB_DIR = path.join(__dirname, '..', '.pgdata5433');
 
 async function main() {
   const pg = new EmbeddedPostgres({
     databaseDir: DB_DIR,
     user: 'p2p',
     password: 'p2p_secret',
-    port: 5432,
+    port: 5433,
     persistent: true,
   });
 
@@ -20,7 +20,7 @@ async function main() {
     // already initialised
   }
 
-  console.log('Starting PostgreSQL on port 5432...');
+  console.log('Starting PostgreSQL on port 5433...');
   await pg.start();
 
   try {

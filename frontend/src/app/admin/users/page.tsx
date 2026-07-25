@@ -181,7 +181,7 @@ function ManageUserModal({ user, onClose, onDone }: { user: User; onClose: () =>
           <Field label="Валюта">
             <select className="input" value={adjCurrency} onChange={(e) => setAdjCurrency(e.target.value)}>
               <option value="USDT">USDT</option>
-              <option value="RUB">RUB</option>
+              <option value="KZT">KZT</option>
             </select>
           </Field>
           <Field label="Сумма (+/-)"><input className="input" type="number" value={adjAmount} onChange={(e) => setAdjAmount(e.target.value)} /></Field>

@@ -66,10 +66,13 @@ export function TradeModal({ ad, methods, tab, open, onClose, onSubmit, loading,
           <input
             className="input text-lg font-semibold tabular-nums"
             type="number"
+            inputMode="decimal"
             value={fiatAmount}
             onChange={(e) => setFiatAmount(e.target.value)}
+            onFocus={(e) => {
+              setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+            }}
             placeholder="50000"
-            autoFocus
           />
         </Field>
 

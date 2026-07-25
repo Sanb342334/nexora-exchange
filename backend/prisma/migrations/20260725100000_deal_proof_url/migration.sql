@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "Deal" ADD COLUMN IF NOT EXISTS "proofUrl" TEXT;
+
+-- AlterTable
+ALTER TABLE "Deal" ALTER COLUMN "fiat" SET DEFAULT 'KZT';
+ALTER TABLE "Advertisement" ALTER COLUMN "fiat" SET DEFAULT 'KZT';
+ALTER TABLE "PaymentMethod" ALTER COLUMN "fiat" SET DEFAULT 'KZT';

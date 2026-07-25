@@ -1,4 +1,10 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
+function resolveApiUrl() {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') return '/api';
+  return 'http://localhost:4000/api';
+}
+
+const API_URL = resolveApiUrl();
 
 const ACCESS_KEY = 'p2p_access';
 const REFRESH_KEY = 'p2p_refresh';
@@ -31,15 +37,32 @@ export class ApiError extends Error {
 async function refreshTokens(): Promise<boolean> {
   const refresh = tokenStore.refresh;
   if (!refresh) return false;
-  const res = await fetch(`${API_URL}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken: refresh }),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: refresh }),
+    });
+  } catch {
+    return false;
+  }
   if (!res.ok) return false;
   const data = await res.json();
   tokenStore.set(data.accessToken, data.refreshToken);
   return true;
+}
+
+const REQUEST_TIMEOUT_MS = 12_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function api<T = any>(
@@ -54,7 +77,12 @@ export async function api<T = any>(
   const access = tokenStore.access;
   if (access) headers['Authorization'] = `Bearer ${access}`;
 
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers });
+  } catch {
+    throw new ApiError('Сервер не отвечает. Проверьте backend на :4000', 0);
+  }
 
   if (res.status === 401 && retry) {
     const ok = await refreshTokens();
@@ -84,3 +112,34 @@ export const apiPost = <T = any>(path: string, body?: unknown) =>
 export const apiPatch = <T = any>(path: string, body?: unknown) =>
   api<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined });
 export const apiDelete = <T = any>(path: string) => api<T>(path, { method: 'DELETE' });
+
+export async function apiUpload(file: File): Promise<{ url: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const headers: Record<string, string> = {};
+  const access = tokenStore.access;
+  if (access) headers['Authorization'] = `Bearer ${access}`;
+
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(`${API_URL}/uploads`, { method: 'POST', headers, body: form });
+  } catch {
+    throw new ApiError('Сервер не отвечает. Проверьте backend на :4000', 0);
+  }
+
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const message = Array.isArray(data?.message)
+      ? data.message.join(', ')
+      : data?.message ?? 'Ошибка загрузки';
+    throw new ApiError(message, res.status);
+  }
+  return data as { url: string };
+}
+
+export function resolveUploadUrl(url: string): string {
+  if (url.startsWith('http')) return url;
+  const base = API_URL.replace(/\/api$/, '');
+  return `${base}${url}`;
+}

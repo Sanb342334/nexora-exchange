@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getPaymentMethodsForFiat } from '../../common/fiat-payment-methods';
 import {
   CreatePaymentMethodDto,
   UpdatePaymentMethodDto,
@@ -17,7 +18,7 @@ export class PaymentMethodsService {
         bankName: dto.bankName,
         holderName: dto.holderName,
         details: dto.details,
-        fiat: dto.fiat ?? 'RUB',
+        fiat: dto.fiat ?? 'KZT',
       },
     });
   }
@@ -27,6 +28,11 @@ export class PaymentMethodsService {
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  catalog(fiat: string) {
+    const normalized = fiat.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8);
+    return { fiat: normalized, methods: getPaymentMethodsForFiat(normalized) };
   }
 
   async update(userId: string, id: string, dto: UpdatePaymentMethodDto) {

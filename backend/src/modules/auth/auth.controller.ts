@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, Enable2faDto, LoginDto, RefreshDto } from './dto/auth.dto';
+import { ChangePasswordDto, Enable2faDto, LoginDto, RefreshDto, RegisterDto } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 
@@ -19,6 +19,13 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.auth.validateAndLogin(dto, this.meta(req));
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('register')
+  register(@Body() dto: RegisterDto, @Req() req: Request) {
+    return this.auth.register(dto, this.meta(req));
   }
 
   @Public()

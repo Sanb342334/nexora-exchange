@@ -1,9 +1,11 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +49,145 @@ type DigestConfig struct {
 	IntervalMin int  `yaml:"interval_min"`
 }
 
+type RiskSetupStops struct {
+	SLATRMult float64 `yaml:"sl_atr_mult"`
+	TPATRMult float64 `yaml:"tp_atr_mult"`
+	MinRR     float64 `yaml:"min_rr"`
+}
+
+type RiskAccountConfig struct {
+	DemoEquityUSDT float64 `yaml:"demo_equity_usdt"`
+	LiveEquityUSDT float64 `yaml:"live_equity_usdt"`
+	AccountRiskPct float64 `yaml:"account_risk_pct"`
+	ScoreFactorMin float64 `yaml:"score_factor_min"`
+}
+
+type RiskSizingConfig struct {
+	VolRefRatio       float64 `yaml:"vol_ref_ratio"`
+	VolFactorMin      float64 `yaml:"vol_factor_min"`
+	ATRRefPct         float64 `yaml:"atr_ref_pct"`
+	ATRFactorMin      float64 `yaml:"atr_factor_min"`
+	MaxNotionalUSDT   float64 `yaml:"max_notional_usdt"`
+	MaxNotionalPct    float64 `yaml:"max_notional_pct"`
+	MaxMarginUsagePct float64 `yaml:"max_margin_usage_pct"`
+}
+
+type RiskStopsConfig struct {
+	Method             string                      `yaml:"method"`
+	StructureLookback  int                         `yaml:"structure_lookback"`
+	StructureBufferPct float64                     `yaml:"structure_buffer_pct"`
+	MinSLDistancePct   float64                     `yaml:"min_sl_distance_pct"`
+	MinRR              float64                     `yaml:"min_rr"`
+	MaxTPATRMult       float64                     `yaml:"max_tp_atr_mult"`
+	SLATRMult          float64                     `yaml:"sl_atr_mult"`
+	TPATRMult          float64                     `yaml:"tp_atr_mult"`
+	BySetup            map[string]RiskSetupStops   `yaml:"by_setup"`
+}
+
+type RiskLeverageConfig struct {
+	Min               int            `yaml:"min"`
+	Max               int            `yaml:"max"`
+	ATRRefPct         float64        `yaml:"atr_ref_pct"`
+	LiqBufferMult     float64        `yaml:"liq_buffer_mult"`
+	MaxSLToLiqRatio   float64        `yaml:"max_sl_to_liq_ratio"`
+	MinSLLiqBufferPct float64        `yaml:"min_sl_liq_buffer_pct"`
+	BySetup           map[string]int `yaml:"by_setup"`
+}
+
+type RiskModeLimits struct {
+	Demo int `yaml:"demo"`
+	Live int `yaml:"live"`
+}
+
+type RiskModeFloatLimits struct {
+	Demo float64 `yaml:"demo"`
+	Live float64 `yaml:"live"`
+}
+
+type RiskPortfolioConfig struct {
+	MaxOpenPositions      RiskModeLimits          `yaml:"max_open_positions"`
+	MaxSameBucketSameSide int                     `yaml:"max_same_bucket_same_side"`
+	MaxTotalSameSide      int                     `yaml:"max_total_same_side"`
+	MaxGrossExposurePct   float64                 `yaml:"max_gross_exposure_pct"`
+	CorrelationBuckets    map[string][]string     `yaml:"correlation_buckets"`
+}
+
+type RiskLimitsConfig struct {
+	DailyLossLimitPct    RiskModeFloatLimits `yaml:"daily_loss_limit_pct"`
+	MaxConsecutiveLosses RiskModeLimits      `yaml:"max_consecutive_losses"`
+	LossCooldownHours    int                 `yaml:"loss_cooldown_hours"`
+}
+
+type RiskDemoConfig struct {
+	BadgeAlerts       bool `yaml:"badge_alerts"`
+	SeparateJournal   bool `yaml:"separate_journal"`
+	AllowOnKillSwitch bool `yaml:"allow_on_kill_switch"`
+}
+
+type RiskLiveConfig struct {
+	RequireExplicitEnable bool `yaml:"require_explicit_enable"`
+	MinScore              int  `yaml:"min_score"`
+}
+
+type RiskConfig struct {
+	Enabled   bool                `yaml:"enabled"`
+	Account   RiskAccountConfig   `yaml:"account"`
+	Sizing    RiskSizingConfig    `yaml:"sizing"`
+	Stops     RiskStopsConfig     `yaml:"stops"`
+	Leverage  RiskLeverageConfig  `yaml:"leverage"`
+	Portfolio RiskPortfolioConfig `yaml:"portfolio"`
+	Limits    RiskLimitsConfig    `yaml:"limits"`
+	Demo      RiskDemoConfig      `yaml:"demo"`
+	Live      RiskLiveConfig      `yaml:"live"`
+}
+
+type StrategyConfig struct {
+	Enabled               bool    `yaml:"enabled"`
+	ConfirmMinSec         int     `yaml:"confirm_min_sec"`
+	ConfirmMaxSec         int     `yaml:"confirm_max_sec"`
+	MinVol1mUSDT          float64 `yaml:"min_vol_1m_usdt"`
+	MinScoreImpulse       int     `yaml:"min_score_impulse"`
+	MinScoreConfirmed     int     `yaml:"min_score_confirmed"`
+	MinScoreHot           int     `yaml:"min_score_hot"`
+	MinTriggersConfirmed  int     `yaml:"min_triggers_confirmed"`
+	FadeRetracePct        float64 `yaml:"fade_retrace_pct"`
+	FadeEnabled           bool    `yaml:"fade_enabled"`
+	RequireOrderflowAlign bool    `yaml:"require_orderflow_align"`
+	ImpulseAlerts         bool    `yaml:"impulse_alerts"`
+	HotBypassConfirm      bool    `yaml:"hot_bypass_confirm"`
+}
+
+type TradersConfig struct {
+	Enabled              bool                `yaml:"enabled"`
+	EquityPerTraderUSDT  float64             `yaml:"equity_per_trader_usdt"`
+	Profiles             []TraderProfileYAML `yaml:"profiles"`
+}
+
+type TraderProfileYAML struct {
+	ID             string  `yaml:"id"`
+	Name           string  `yaml:"name"`
+	Emoji          string  `yaml:"emoji"`
+	Description    string  `yaml:"description"`
+	MinScore       int     `yaml:"min_score"`
+	MinVol1mUSDT   float64 `yaml:"min_vol_1m_usdt"`
+	MinTriggers    int     `yaml:"min_triggers"`
+	AllowFade      bool    `yaml:"allow_fade"`
+	AllowHotOnly   bool    `yaml:"allow_hot_only"`
+	LeverageMax    int     `yaml:"leverage_max"`
+	RiskMult       float64 `yaml:"risk_mult"`
+	MaxOpen        int     `yaml:"max_open"`
+	MinRR          float64 `yaml:"min_rr"`
+	MinSLDistancePct float64 `yaml:"min_sl_distance_pct"`
+	MinSLLiqBuffer float64 `yaml:"min_sl_liq_buffer_pct"`
+	TelegramNotify bool    `yaml:"telegram_notify"`
+	MomentumOnly   bool    `yaml:"momentum_only"`
+	FadeOnly       bool    `yaml:"fade_only"`
+	MaxScore       int     `yaml:"max_score"`
+	Strategy       string  `yaml:"strategy"`
+	MinTapePoints  int     `yaml:"min_tape_points"`
+	MaxNotionalUSDT float64 `yaml:"max_notional_usdt"`
+}
+
 type YAMLConfig struct {
 	Thresholds Thresholds                `yaml:"thresholds"`
 	Scoring    ScoringWeights            `yaml:"scoring"`
@@ -55,6 +196,14 @@ type YAMLConfig struct {
 	Whitelist  []string                  `yaml:"whitelist"`
 	Paper      PaperConfig               `yaml:"paper"`
 	Digest     DigestConfig              `yaml:"digest"`
+	Risk       RiskConfig                `yaml:"risk"`
+	Strategy   StrategyConfig            `yaml:"strategy"`
+	Traders    TradersConfig             `yaml:"traders"`
+	Telegram   TelegramNotifyConfig      `yaml:"telegram"`
+}
+
+type TelegramNotifyConfig struct {
+	MinNotifyScore int `yaml:"min_notify_score"`
 }
 
 type Config struct {
@@ -69,12 +218,16 @@ type Config struct {
 	BybitRESTURL     string
 	BybitWSURL       string
 	ConfigPath       string
+	SymbolsFile      string
 	OIPollInterval   time.Duration
 	LSPollInterval   time.Duration
 	WSShardSize      int
 	ConfigReload     time.Duration
 
-	YAML YAMLConfig
+	staticSymbols      []string
+	useDefaultSymbols  bool
+	telegramMinNotify  int
+	YAML               YAMLConfig
 }
 
 func Load() (*Config, error) {
@@ -88,11 +241,13 @@ func Load() (*Config, error) {
 		LogDir:           envString("LOG_DIR", "logs"),
 		BybitRESTURL:     envString("BYBIT_REST_URL", "https://api.bybit.com"),
 		BybitWSURL:       envString("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/linear"),
-		ConfigPath:       envString("CONFIG_PATH", "config.yaml"),
-		OIPollInterval:   10 * time.Second,
-		LSPollInterval:   60 * time.Second,
-		WSShardSize:      30,
-		ConfigReload:     5 * time.Minute,
+		ConfigPath:        envString("CONFIG_PATH", "config.yaml"),
+		SymbolsFile:       envString("SYMBOLS_FILE", "symbols.list"),
+		OIPollInterval:    time.Duration(envInt("OI_POLL_SEC", 10)) * time.Second,
+		LSPollInterval:    time.Duration(envInt("LS_POLL_SEC", 60)) * time.Second,
+		WSShardSize:       30,
+		ConfigReload:      5 * time.Minute,
+		useDefaultSymbols: envBool("USE_DEFAULT_SYMBOLS", true),
 	}
 
 	chatIDStr := os.Getenv("TELEGRAM_CHAT_ID")
@@ -107,6 +262,11 @@ func Load() (*Config, error) {
 	if err := cfg.loadYAML(); err != nil {
 		return nil, err
 	}
+	cfg.applyTelegramNotifyOverride()
+
+	if err := cfg.parseStaticSymbols(); err != nil {
+		return nil, err
+	}
 
 	if !cfg.DryRun {
 		if cfg.TelegramBotToken == "" {
@@ -115,6 +275,34 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) parseStaticSymbols() error {
+	raw := os.Getenv("SYMBOLS")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	for _, p := range parts {
+		s := strings.TrimSpace(strings.ToUpper(p))
+		if s != "" {
+			c.staticSymbols = append(c.staticSymbols, s)
+		}
+	}
+	return nil
+}
+
+func (c *Config) StaticSymbols() []string {
+	if len(c.staticSymbols) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.staticSymbols))
+	copy(out, c.staticSymbols)
+	return out
+}
+
+func (c *Config) UseDefaultSymbols() bool {
+	return c.useDefaultSymbols
 }
 
 func (c *Config) loadYAML() error {
@@ -142,7 +330,7 @@ func (c *Config) ReloadLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := c.loadYAML(); err == nil {
-				// silent reload
+				c.applyTelegramNotifyOverride()
 			}
 		}
 	}
@@ -152,6 +340,25 @@ func (c *Config) Snapshot() YAMLConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.YAML
+}
+
+func (c *Config) TelegramMinNotifyScore() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.telegramMinNotify > 0 {
+		return c.telegramMinNotify
+	}
+	return c.YAML.Telegram.MinNotifyScore
+}
+
+func (c *Config) applyTelegramNotifyOverride() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if v := envInt("TELEGRAM_MIN_SCORE", 0); v > 0 {
+		c.telegramMinNotify = v
+		return
+	}
+	c.telegramMinNotify = c.YAML.Telegram.MinNotifyScore
 }
 
 func (c *Config) IsBlacklisted(symbol string) bool {
@@ -242,6 +449,30 @@ func applyYAMLDefaults(y *YAMLConfig) {
 	}
 	if y.Digest.IntervalMin == 0 {
 		y.Digest.IntervalMin = 60
+	}
+	if y.Strategy.ConfirmMinSec == 0 {
+		y.Strategy.ConfirmMinSec = 30
+	}
+	if y.Strategy.ConfirmMaxSec == 0 {
+		y.Strategy.ConfirmMaxSec = 120
+	}
+	if y.Strategy.MinVol1mUSDT == 0 {
+		y.Strategy.MinVol1mUSDT = 30_000
+	}
+	if y.Strategy.MinScoreImpulse == 0 {
+		y.Strategy.MinScoreImpulse = 65
+	}
+	if y.Strategy.MinScoreConfirmed == 0 {
+		y.Strategy.MinScoreConfirmed = 70
+	}
+	if y.Strategy.MinScoreHot == 0 {
+		y.Strategy.MinScoreHot = 85
+	}
+	if y.Strategy.MinTriggersConfirmed == 0 {
+		y.Strategy.MinTriggersConfirmed = 2
+	}
+	if y.Strategy.FadeRetracePct == 0 {
+		y.Strategy.FadeRetracePct = 45
 	}
 }
 

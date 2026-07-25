@@ -39,3 +39,11 @@ tmp/
 # Docker volumes
 .docker-data/
 backend/.pgdata/
+backend/.pgdata5433/
+backend/uploads/
+
+# Local scanner runtime state and credentials
+bybit-scanner/config.local.yaml
+bybit-scanner/logs/
+bybit-scanner/*.exe
+*.tsbuildinfo

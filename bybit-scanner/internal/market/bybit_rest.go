@@ -16,6 +16,15 @@ import (
 	"bybit-scanner/internal/logger"
 )
 
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
+	}
+}
+
 type RESTClient struct {
 	baseURL    string
 	httpClient *http.Client
@@ -62,9 +71,9 @@ type lsItem struct {
 
 func NewRESTClient(cfg *config.Config, log *logger.Loggers) *RESTClient {
 	return &RESTClient{
-		baseURL: strings.TrimRight(cfg.BybitRESTURL, "/"),
-		httpClient: &http.Client{Timeout: 15 * time.Second},
-		log: log,
+		baseURL:    strings.TrimRight(cfg.BybitRESTURL, "/"),
+		httpClient: newHTTPClient(),
+		log:        log,
 	}
 }
 
@@ -174,6 +183,29 @@ func (c *RESTClient) FetchLongShortRatio(ctx context.Context, symbol string) (fl
 		return 0, err
 	}
 	return ratio, nil
+}
+
+func (c *RESTClient) FetchLastPrice(ctx context.Context, symbol string) (float64, error) {
+	url := fmt.Sprintf("%s/v5/market/tickers?category=linear&symbol=%s", c.baseURL, symbol)
+	body, err := c.doGET(ctx, url)
+	if err != nil {
+		return 0, err
+	}
+	var resp apiResult
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, err
+	}
+	if resp.RetCode != 0 {
+		return 0, fmt.Errorf("HTTP retCode %d: %s", resp.RetCode, resp.RetMsg)
+	}
+	var result tickerResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return 0, err
+	}
+	if len(result.List) == 0 {
+		return 0, fmt.Errorf("empty ticker")
+	}
+	return strconv.ParseFloat(result.List[0].LastPrice, 64)
 }
 
 func (c *RESTClient) doGET(ctx context.Context, url string) ([]byte, error) {

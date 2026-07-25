@@ -40,7 +40,7 @@ export default function AdminRatesPage() {
     setError('');
     setMsg('');
     try {
-      await apiPost('/rates/manual', { asset: 'USDT', fiat: 'RUB', price: parseFloat(price) });
+      await apiPost('/rates/manual', { asset: 'USDT', fiat: 'KZT', price: parseFloat(price) });
       setMsg('Курс зафиксирован вручную');
       load();
     } catch (err) {
@@ -49,7 +49,7 @@ export default function AdminRatesPage() {
   };
 
   const clearManual = async () => {
-    await apiDelete('/rates/manual?asset=USDT&fiat=RUB').catch(() => {});
+    await apiDelete('/rates/manual?asset=USDT&fiat=KZT').catch(() => {});
     setMsg('Ручной курс сброшен (используется биржа/статик)');
     load();
   };
@@ -61,12 +61,12 @@ export default function AdminRatesPage() {
       <h1 className="text-2xl font-bold">Курсы</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Текущий курс USDT/RUB">
+        <Card title="Текущий курс USDT/KZT">
           <div className="text-4xl font-bold text-nexora-accent">{market ? fmtFiat(market.price) : '—'}</div>
           <div className="text-sm text-gray-400 mt-1">Источник: {market?.source ?? '—'}</div>
 
           <div className="mt-6 space-y-3">
-            <Field label="Установить ручной курс (RUB за 1 USDT)">
+            <Field label="Установить ручной курс (KZT за 1 USDT)">
               <input className="input" type="number" value={price} onChange={(e) => setPrice(e.target.value)} />
             </Field>
             <div className="flex gap-2">

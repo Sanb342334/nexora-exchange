@@ -1,4 +1,8 @@
-*
-!.env.example
-!config.yaml
-!logs/.gitkeep
+.git
+.github
+.env
+*.exe
+bin/
+logs/*.log
+logs/subscribers.json
+logs/paper_trades.jsonl

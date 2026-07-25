@@ -342,4 +342,150 @@ export class WalletsService {
       take: limit,
     });
   }
+
+  /** Row-level lock to prevent concurrent double-spend on the same wallets. */
+  private async lockWalletRows(walletIds: string[], tx: Tx) {
+    for (const id of [...walletIds].sort()) {
+      await tx.$queryRaw`SELECT id FROM "Wallet" WHERE id = ${id} FOR UPDATE`;
+    }
+  }
+
+  async lockSpot(
+    userId: string,
+    currency: string,
+    amount: Prisma.Decimal.Value,
+    ref: { refType?: string; refId?: string },
+    tx: Tx,
+  ) {
+    const wallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    await this.lockWalletRows([wallet.id], tx);
+    return this.post(
+      [{ walletId: wallet.id, availableDelta: D(amount).negated(), frozenDelta: amount }],
+      { type: LedgerTxType.SPOT_LOCK, currency, ...ref },
+      tx,
+    );
+  }
+
+  async unlockSpot(
+    userId: string,
+    currency: string,
+    amount: Prisma.Decimal.Value,
+    ref: { refType?: string; refId?: string },
+    tx: Tx,
+  ) {
+    const wallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    await this.lockWalletRows([wallet.id], tx);
+    return this.post(
+      [{ walletId: wallet.id, availableDelta: amount, frozenDelta: D(amount).negated() }],
+      { type: LedgerTxType.SPOT_UNLOCK, currency, ...ref },
+      tx,
+    );
+  }
+
+  async settleSpotFill(
+    params: {
+      userId: string;
+      base: string;
+      quote: string;
+      side: 'BUY' | 'SELL';
+      quantity: Prisma.Decimal.Value;
+      quoteAmount: Prisma.Decimal.Value;
+      feeAmount: Prisma.Decimal.Value;
+      refId: string;
+    },
+    tx: Tx,
+  ) {
+    const { userId, base, quote, side, quantity, quoteAmount, feeAmount, refId } = params;
+    const systemId = await this.getSystemUserId(tx);
+    const userBase = await this.ensureWallet(userId, base, 'USER', tx);
+    const userQuote = await this.ensureWallet(userId, quote, 'USER', tx);
+    const houseBase = await this.ensureWallet(systemId, base, 'HOUSE', tx);
+    const houseQuote = await this.ensureWallet(systemId, quote, 'HOUSE', tx);
+
+    await this.lockWalletRows([userBase.id, userQuote.id, houseBase.id, houseQuote.id], tx);
+
+    const freshHouseBase = await tx.wallet.findUniqueOrThrow({ where: { id: houseBase.id } });
+    const freshHouseQuote = await tx.wallet.findUniqueOrThrow({ where: { id: houseQuote.id } });
+
+    const qty = D(quantity);
+    const quoteAmt = D(quoteAmount);
+    const fee = D(feeAmount);
+
+    if (side === 'BUY') {
+      if (D(freshHouseBase.available).lt(qty)) {
+        throw new BadRequestException('Insufficient house liquidity');
+      }
+      const debitQuote = quoteAmt.plus(fee);
+      return this.post(
+        [
+          { walletId: userQuote.id, availableDelta: 0, frozenDelta: debitQuote.negated() },
+          { walletId: userBase.id, availableDelta: qty, frozenDelta: 0 },
+          { walletId: houseQuote.id, availableDelta: debitQuote, frozenDelta: 0 },
+          { walletId: houseBase.id, availableDelta: qty.negated(), frozenDelta: 0 },
+        ],
+        { type: LedgerTxType.SPOT_FILL, currency: quote, refType: 'spot_trade', refId },
+        tx,
+      );
+    }
+
+    if (D(freshHouseQuote.available).lt(quoteAmt)) {
+      throw new BadRequestException('Insufficient house liquidity');
+    }
+    const creditQuote = quoteAmt.minus(fee);
+    return this.post(
+      [
+        { walletId: userBase.id, availableDelta: 0, frozenDelta: qty.negated() },
+        { walletId: userQuote.id, availableDelta: creditQuote, frozenDelta: 0 },
+        { walletId: houseBase.id, availableDelta: qty, frozenDelta: 0 },
+        { walletId: houseQuote.id, availableDelta: creditQuote.negated(), frozenDelta: 0 },
+      ],
+      { type: LedgerTxType.SPOT_FILL, currency: base, refType: 'spot_trade', refId },
+      tx,
+    );
+  }
+
+  async lockFuturesMargin(
+    userId: string,
+    currency: string,
+    amount: Prisma.Decimal.Value,
+    ref: { refType?: string; refId?: string },
+    tx: Tx,
+  ) {
+    const wallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    await this.lockWalletRows([wallet.id], tx);
+    return this.post(
+      [{ walletId: wallet.id, availableDelta: D(amount).negated(), frozenDelta: amount }],
+      { type: LedgerTxType.FUTURES_LOCK, currency, ...ref },
+      tx,
+    );
+  }
+
+  async settleFuturesClose(
+    params: {
+      userId: string;
+      currency: string;
+      margin: Prisma.Decimal.Value;
+      pnl: Prisma.Decimal.Value;
+      refId: string;
+    },
+    tx: Tx,
+  ) {
+    const { userId, currency, margin, pnl, refId } = params;
+    const wallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    const systemId = await this.getSystemUserId(tx);
+    const houseWallet = await this.ensureWallet(systemId, currency, 'HOUSE', tx);
+    await this.lockWalletRows([wallet.id, houseWallet.id], tx);
+
+    const credit = D(margin).plus(pnl);
+    const houseDelta = credit.negated();
+
+    return this.post(
+      [
+        { walletId: wallet.id, availableDelta: credit, frozenDelta: D(margin).negated() },
+        { walletId: houseWallet.id, availableDelta: houseDelta, frozenDelta: 0 },
+      ],
+      { type: LedgerTxType.FUTURES_PNL, currency, refType: 'futures_position', refId },
+      tx,
+    );
+  }
 }

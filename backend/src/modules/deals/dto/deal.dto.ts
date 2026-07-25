@@ -27,6 +27,12 @@ export class OpenDisputeDto {
   reason!: string;
 }
 
+export class MarkPaidDto {
+  @IsOptional()
+  @IsString()
+  proofUrl?: string;
+}
+
 export class SendMessageDto {
   @IsString()
   @MinLength(1)

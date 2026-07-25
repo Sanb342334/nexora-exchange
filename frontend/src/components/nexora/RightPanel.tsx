@@ -39,37 +39,37 @@ export function MarketRightPanel() {
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-[16px] border border-white/[0.06] bg-[#10131C] p-4">
-        <h3 className="font-display text-sm font-bold text-white mb-3">Быстрые действия</h3>
-        <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-1.5">
+    <div className="space-y-3">
+      <div className="rounded-[14px] border border-nexora-border bg-nexora-card p-3">
+        <h3 className="font-display text-[13px] font-bold text-nexora-text mb-2.5">Быстрые действия</h3>
+        <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-1">
           {quickActions.map(({ href, icon: Icon, label }) => (
             <motion.div key={label} variants={staggerItem}>
               <Link
                 href={href}
-                className="flex items-center gap-3 rounded-[10px] px-2 py-2.5 text-sm text-nexora-text hover:bg-white/[0.04] transition active:scale-[0.98]"
+                className="flex items-center gap-2.5 rounded-[10px] px-1.5 py-2 text-[13px] text-nexora-text hover:bg-white/[0.04] transition active:scale-[0.98]"
               >
-                <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-nexora-accent/15 text-nexora-accent">
-                  <Icon size={16} />
+                <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-nexora-accent/15 text-nexora-accent">
+                  <Icon size={15} />
                 </div>
-                {label}
+                <span className="leading-tight">{label}</span>
               </Link>
             </motion.div>
           ))}
         </motion.div>
       </div>
 
-      <div className="rounded-[16px] border border-white/[0.06] bg-[#10131C] p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <TrendingUp size={15} className="text-nexora-neon" />
-          <h3 className="font-display text-sm font-bold text-white">Курсы криптовалют</h3>
+      <div className="rounded-[14px] border border-nexora-border bg-nexora-card p-3">
+        <div className="flex items-center gap-2 mb-2.5">
+          <TrendingUp size={14} className="text-nexora-neon" />
+          <h3 className="font-display text-[13px] font-bold text-nexora-text">Курсы криптовалют</h3>
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {rates.map((r) => (
             <div key={r.label} className="flex items-center justify-between">
               <span className="text-xs text-nexora-muted">{r.label}</span>
               <div className="text-right">
-                <div className="text-sm font-bold text-white tabular-nums">{r.price}</div>
+                <div className="text-sm font-bold text-nexora-text tabular-nums">{r.price}</div>
                 <div className={`text-[10px] font-semibold ${r.up ? 'text-nexora-neon' : 'text-nexora-error'}`}>
                   {r.change}
                 </div>
@@ -79,22 +79,22 @@ export function MarketRightPanel() {
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-[16px] border border-white/[0.06] bg-[#10131C] p-4">
-        <div className="flex gap-3">
+      <div className="relative overflow-hidden rounded-[14px] border border-nexora-border bg-nexora-card p-3">
+        <div className="flex gap-2">
           <div className="flex-1 min-w-0">
-            <h3 className="font-display text-sm font-bold text-white leading-snug">
+            <h3 className="font-display text-[13px] font-bold text-nexora-text leading-snug">
               Безопасность на первом месте
             </h3>
-            <ul className="mt-3 space-y-2.5">
+            <ul className="mt-2 space-y-2">
               {securityItems.map(({ icon: Icon, text }) => (
-                <li key={text} className="flex items-center gap-2.5 text-[12px] text-nexora-muted">
-                  <Icon size={14} className="text-nexora-accent/80 shrink-0" />
+                <li key={text} className="flex items-center gap-2 text-[11px] text-nexora-muted">
+                  <Icon size={13} className="text-nexora-accent/80 shrink-0" />
                   {text}
                 </li>
               ))}
             </ul>
           </div>
-          <div className="relative w-[88px] h-[100px] shrink-0 -mr-1">
+          <div className="relative w-[72px] h-[84px] shrink-0 -mr-1">
             <Image
               src="/assets/nexora-shield-3d.png"
               alt="Security"

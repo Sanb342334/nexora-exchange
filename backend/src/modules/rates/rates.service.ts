@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExchangeService } from '../exchange/exchange.service';
 import { D, roundFiat } from '../../common/money';
+import { mockUsdtFiatRate } from '../../common/mock-fiat-rates';
 
 interface CacheEntry {
   price: number;
@@ -29,7 +30,7 @@ export class RatesService {
   /** Current market price for asset in fiat, with caching + snapshot persistence. */
   async getMarketPrice(asset?: string, fiat?: string): Promise<{ price: number; source: string }> {
     const a = asset ?? this.config.get<string>('economics.baseAsset') ?? 'USDT';
-    const f = fiat ?? this.config.get<string>('economics.baseFiat') ?? 'RUB';
+    const f = fiat ?? this.config.get<string>('economics.baseFiat') ?? 'KZT';
     const key = this.key(a, f);
 
     const cached = this.cache.get(key);
@@ -60,7 +61,7 @@ export class RatesService {
     }
 
     // 3) static fallback
-    const staticPrice = this.config.get<number>('rates.staticUsdtRub') ?? 95;
+    const staticPrice = mockUsdtFiatRate(`${a}${f}`, this.config.get<number>('rates.staticUsdtKzt') ?? 470);
     this.cache.set(key, { price: staticPrice, source: 'static', ts: Date.now() });
     return { price: staticPrice, source: 'static' };
   }
@@ -111,7 +112,7 @@ export class RatesService {
 
   async history(asset?: string, fiat?: string, limit = 100) {
     const a = asset ?? this.config.get<string>('economics.baseAsset') ?? 'USDT';
-    const f = fiat ?? this.config.get<string>('economics.baseFiat') ?? 'RUB';
+    const f = fiat ?? this.config.get<string>('economics.baseFiat') ?? 'KZT';
     return this.prisma.rateSnapshot.findMany({
       where: { asset: a, fiat: f },
       orderBy: { createdAt: 'desc' },

@@ -9,16 +9,25 @@ import (
 
 	"bybit-scanner/internal/analyzer"
 	"bybit-scanner/internal/config"
+	"bybit-scanner/internal/risk"
 )
 
 type Trade struct {
 	ID            string    `json:"id"`
 	Symbol        string    `json:"symbol"`
 	Direction     string    `json:"direction"`
+	Side          string    `json:"side"`
 	Score         int       `json:"score"`
 	EntryPrice    float64   `json:"entry_price"`
 	SuggestedSL   float64   `json:"suggested_sl"`
 	SuggestedTP   float64   `json:"suggested_tp"`
+	Leverage      int       `json:"leverage"`
+	NotionalUSDT  float64   `json:"notional_usdt"`
+	MarginUSDT    float64   `json:"margin_usdt"`
+	RiskUSDT      float64   `json:"risk_usdt"`
+	RiskPct       float64   `json:"risk_pct"`
+	RiskReward    float64   `json:"risk_reward"`
+	Mode          string    `json:"mode"`
 	SlippagePct   float64   `json:"slippage_pct"`
 	Triggers      []string  `json:"triggers"`
 	VolumeRatio   float64   `json:"volume_ratio"`
@@ -43,28 +52,29 @@ func New(cfg *config.Config, logDir string) *Journal {
 	}
 }
 
-func (j *Journal) Record(sig analyzer.Signal) {
+func (j *Journal) Record(rec risk.TradeRecommendation) {
 	yamlCfg := j.cfg.Snapshot()
 	if !yamlCfg.Paper.Enabled {
 		return
 	}
 
-	slip := yamlCfg.Paper.SlippagePct / 100
-	entry := sig.Price
-	if sig.Movement == "PUMP" {
-		entry *= 1 + slip
-	} else {
-		entry *= 1 - slip
-	}
-
+	sig := rec.Signal
 	tr := Trade{
 		ID:            sig.Timestamp.Format("20060102150405") + "-" + sig.Symbol,
 		Symbol:        sig.Symbol,
 		Direction:     sig.Movement,
+		Side:          string(rec.Side),
 		Score:         sig.Score,
-		EntryPrice:    entry,
-		SuggestedSL:   sig.SuggestedSL,
-		SuggestedTP:   sig.SuggestedTP,
+		EntryPrice:    rec.Entry,
+		SuggestedSL:   rec.StopLoss,
+		SuggestedTP:   rec.TakeProfit,
+		Leverage:      rec.Leverage,
+		NotionalUSDT:  rec.NotionalUSDT,
+		MarginUSDT:    rec.MarginUSDT,
+		RiskUSDT:      rec.RiskUSDT,
+		RiskPct:       rec.RiskPct,
+		RiskReward:    rec.RiskReward,
+		Mode:          string(rec.Mode),
 		SlippagePct:   yamlCfg.Paper.SlippagePct,
 		Triggers:      triggersToStrings(sig.Triggers),
 		VolumeRatio:   sig.VolumeRatio,

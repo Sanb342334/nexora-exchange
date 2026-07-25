@@ -13,6 +13,9 @@ type subscriber struct {
 	Username  string    `json:"username,omitempty"`
 	FirstName string    `json:"first_name,omitempty"`
 	JoinedAt  time.Time `json:"joined_at"`
+	MuteUntil *time.Time `json:"mute_until,omitempty"`
+	MinScoreOverride int `json:"min_score_override,omitempty"`
+	SignalLogs bool `json:"signal_logs,omitempty"`
 }
 
 type SubscriberStore struct {
@@ -107,6 +110,88 @@ func (s *SubscriberStore) All() []int64 {
 		out = append(out, id)
 	}
 	return out
+}
+
+func (s *SubscriberStore) Allows(chatID int64, score, defaultMinScore int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		return false
+	}
+	if sub.MuteUntil != nil && time.Now().Before(*sub.MuteUntil) {
+		return false
+	}
+	minScore := defaultMinScore
+	if sub.MinScoreOverride > 0 {
+		minScore = sub.MinScoreOverride
+	}
+	return score >= minScore
+}
+
+func (s *SubscriberStore) SetMute(chatID int64, until time.Time) error {
+	s.mu.Lock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		s.mu.Unlock()
+		return nil
+	}
+	sub.MuteUntil = &until
+	s.chatIDs[chatID] = sub
+	s.mu.Unlock()
+	return s.save()
+}
+
+func (s *SubscriberStore) ClearMute(chatID int64) (bool, error) {
+	s.mu.Lock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		s.mu.Unlock()
+		return false, nil
+	}
+	was := sub.MuteUntil != nil && time.Now().Before(*sub.MuteUntil)
+	sub.MuteUntil = nil
+	s.chatIDs[chatID] = sub
+	s.mu.Unlock()
+	return was, s.save()
+}
+
+func (s *SubscriberStore) MuteUntil(chatID int64) *time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok || sub.MuteUntil == nil {
+		return nil
+	}
+	until := *sub.MuteUntil
+	return &until
+}
+
+func (s *SubscriberStore) ToggleSignalLogs(chatID int64) (bool, error) {
+	s.mu.Lock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		s.mu.Unlock()
+		return false, nil
+	}
+	sub.SignalLogs = !sub.SignalLogs
+	s.chatIDs[chatID] = sub
+	enabled := sub.SignalLogs
+	s.mu.Unlock()
+	return enabled, s.save()
+}
+
+func (s *SubscriberStore) WantsSignalLogs(chatID int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.chatIDs[chatID].SignalLogs
+}
+
+func (s *SubscriberStore) IsMuted(chatID int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.chatIDs[chatID]
+	return ok && sub.MuteUntil != nil && time.Now().Before(*sub.MuteUntil)
 }
 
 func (s *SubscriberStore) Count() int {

@@ -69,6 +69,12 @@ type Signal struct {
 	SuggestedSL     float64
 	SuggestedTP     float64
 	Timestamp       time.Time
+
+	// Pro strategy layer — explicit trade directive for risk/telegram.
+	AlertType   string   // IMPULSE, CONFIRMED, FADE, HOT
+	TradeAction string   // LONG, SHORT
+	Reasons     []string
+	SignalID    string
 }
 
 type SymbolState struct {
@@ -394,6 +400,43 @@ func (st *SymbolState) spreadPct() float64 {
 
 func (st *SymbolState) tradeDelta() float64 {
 	return st.tradeBucket.BuyUSDT - st.tradeBucket.SellUSDT
+}
+
+func (st *SymbolState) LastPrice() float64 {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.lastPrice > 0 {
+		return st.lastPrice
+	}
+	c := st.activeCandle()
+	if c.Close > 0 {
+		return c.Close
+	}
+	return c.Open
+}
+
+func (st *SymbolState) OrderflowDelta() float64 {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.tradeDelta()
+}
+
+func (st *SymbolState) RecentCandles(n int) []Candle {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if n <= 0 || st.candleCount == 0 {
+		return nil
+	}
+	if n > st.candleCount {
+		n = st.candleCount
+	}
+	out := make([]Candle, 0, n)
+	start := (st.candleHead - st.candleCount + WindowSize) % WindowSize
+	for i := st.candleCount - n; i < st.candleCount; i++ {
+		idx := (start + i) % WindowSize
+		out = append(out, st.candles[idx])
+	}
+	return out
 }
 
 type Detector struct {

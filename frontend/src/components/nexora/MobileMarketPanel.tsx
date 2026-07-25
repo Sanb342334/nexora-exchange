@@ -27,7 +27,7 @@ export function MobileMarketPanel() {
   ];
 
   return (
-    <div className="xl:hidden space-y-3">
+    <div className="lg:hidden space-y-3">
       <div className="grid grid-cols-4 gap-2">
         {actions.map(({ href, icon: Icon, label, color }) => (
           <Link

@@ -22,6 +22,10 @@ const userSelect = {
   totpEnabled: true,
   lastLoginAt: true,
   createdAt: true,
+  countryCode: true,
+  preferredFiat: true,
+  preferredAsset: true,
+  locale: true,
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -58,7 +62,7 @@ export class UsersService {
 
     // Provision wallets for the base asset and fiat.
     const baseAsset = this.config.get<string>('economics.baseAsset') ?? 'USDT';
-    const baseFiat = this.config.get<string>('economics.baseFiat') ?? 'RUB';
+    const baseFiat = this.config.get<string>('economics.baseFiat') ?? 'KZT';
     await this.wallets.ensureWallet(user.id, baseAsset);
     await this.wallets.ensureWallet(user.id, baseFiat);
 

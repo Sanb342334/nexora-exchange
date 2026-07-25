@@ -1,0 +1,8 @@
+version: "3"
+endpoints:
+  - name: nexora-fe
+    upstream:
+      url: http://localhost:3000
+  - name: nexora-be
+    upstream:
+      url: http://localhost:4000

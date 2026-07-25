@@ -56,6 +56,15 @@ async function creditUser(userId: string, currency: string, amount: string) {
   });
 }
 
+async function creditHouse(currency: string, amount: string) {
+  const system = await prisma.user.findFirstOrThrow({ where: { isSystem: true } });
+  const houseWallet = await ensureWallet(system.id, currency, 'HOUSE');
+  await prisma.wallet.update({
+    where: { id: houseWallet.id },
+    data: { available: { increment: amount } },
+  });
+}
+
 async function main() {
   console.log('Seeding database...');
 
@@ -72,7 +81,22 @@ async function main() {
   });
   await ensureWallet(system.id, BASE_ASSET, 'HOUSE');
   await ensureWallet(system.id, BASE_FIAT, 'HOUSE');
-  await creditUser(system.id, BASE_ASSET, '1000000');
+  await creditHouse(BASE_ASSET, '1000000');
+  await creditHouse(BASE_FIAT, '50000000');
+
+  for (const { currency, amount } of [
+    { currency: 'BTC', amount: '100' },
+    { currency: 'ETH', amount: '5000' },
+    { currency: 'SOL', amount: '50000' },
+    { currency: 'XRP', amount: '1000000' },
+    { currency: 'BNB', amount: '10000' },
+    { currency: 'ADA', amount: '5000000' },
+    { currency: 'DOGE', amount: '50000000' },
+    { currency: 'TON', amount: '500000' },
+  ]) {
+    await ensureWallet(system.id, currency, 'HOUSE');
+    await creditHouse(currency, amount);
+  }
 
   const adminUsername = process.env.ADMIN_USERNAME ?? 'admin';
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'Admin12345!';

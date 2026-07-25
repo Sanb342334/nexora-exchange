@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 const (
 	maxBackoff       = 30 * time.Second
 	pingInterval     = 20 * time.Second
-	readWait         = 30 * time.Second
+	readWait         = 60 * time.Second
 	writeWait        = 10 * time.Second
 	maxSubscriptions = 80
 )
@@ -207,7 +208,9 @@ func (s *wsShard) run(ctx context.Context) {
 }
 
 func (s *wsShard) connectAndServe(ctx context.Context) error {
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, s.url, nil)
+	dialer := websocket.DefaultDialer
+	dialer.Proxy = http.ProxyFromEnvironment
+	conn, _, err := dialer.DialContext(ctx, s.url, nil)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -259,7 +262,9 @@ func (s *wsShard) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			// Bybit V5 requires an application-level heartbeat. RFC websocket
+			// pings alone are not enough to keep quiet public shards alive.
+			if err := conn.WriteJSON(map[string]string{"op": "ping"}); err != nil {
 				return
 			}
 		}

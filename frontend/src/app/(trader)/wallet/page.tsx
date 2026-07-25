@@ -49,7 +49,7 @@ export default function WalletPage() {
   if (loading) return <Spinner />;
 
   const usdt = balances.find((b) => b.currency === 'USDT');
-  const fiat = balances.find((b) => b.currency === 'RUB' || b.currency === 'KZT');
+  const fiat = balances.find((b) => b.currency === 'KZT');
 
   return (
     <PageMotion className="space-y-6">
@@ -168,7 +168,7 @@ function DepositForm({ onDone }: { onDone: () => void }) {
       <Field label="Валюта">
         <select className="select" value={currency} onChange={(e) => setCurrency(e.target.value)}>
           <option value="USDT">USDT</option>
-          <option value="RUB">RUB</option>
+          <option value="KZT">KZT</option>
         </select>
       </Field>
       <Field label="Сумма">
@@ -211,7 +211,7 @@ function WithdrawForm({ onDone, balances }: { onDone: () => void; balances: Bala
       <Field label="Валюта">
         <select className="select" value={currency} onChange={(e) => setCurrency(e.target.value)}>
           <option value="USDT">USDT</option>
-          <option value="RUB">RUB</option>
+          <option value="KZT">KZT</option>
         </select>
       </Field>
       <Field label={`Сумма (доступно: ${bal ? fmtCrypto(bal.available) : 0})`}>

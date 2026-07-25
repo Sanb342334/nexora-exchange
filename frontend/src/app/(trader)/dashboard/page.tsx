@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 export default function DashboardRedirect() {
   const router = useRouter();
   useEffect(() => {
-    router.replace('/market');
+    router.replace('/trade');
   }, [router]);
   return null;
 }

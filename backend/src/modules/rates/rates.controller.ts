@@ -39,12 +39,12 @@ export class RatesController {
   @Roles('ADMIN')
   @Post('manual')
   setManual(@Body() dto: SetRateDto) {
-    return this.rates.setManualRate(dto.asset ?? 'USDT', dto.fiat ?? 'RUB', dto.price);
+    return this.rates.setManualRate(dto.asset ?? 'USDT', dto.fiat ?? 'KZT', dto.price);
   }
 
   @Roles('ADMIN')
   @Delete('manual')
   clearManual(@Query('asset') asset?: string, @Query('fiat') fiat?: string) {
-    return this.rates.clearManualRate(asset ?? 'USDT', fiat ?? 'RUB');
+    return this.rates.clearManualRate(asset ?? 'USDT', fiat ?? 'KZT');
   }
 }

@@ -4,6 +4,7 @@ import { DealsService } from './deals.service';
 import {
   CancelDealDto,
   CreateDealDto,
+  MarkPaidDto,
   OpenDisputeDto,
   SendMessageDto,
 } from './dto/deal.dto';
@@ -30,8 +31,8 @@ export class DealsController {
   }
 
   @Post(':id/paid')
-  markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.deals.markPaid(user.id, id);
+  markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: MarkPaidDto) {
+    return this.deals.markPaid(user.id, id, dto.proofUrl);
   }
 
   @Post(':id/release')

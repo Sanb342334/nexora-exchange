@@ -4,10 +4,10 @@ import { motion } from 'framer-motion';
 import { Check } from 'lucide-react';
 
 const STEPS = [
-  { id: 'CREATED', label: 'Создана' },
-  { id: 'PAID', label: 'Оплачена' },
-  { id: 'RELEASED', label: 'Подтверждена' },
-  { id: 'COMPLETED', label: 'Завершена' },
+  { id: 'CREATED', label: 'Ожидается оплата' },
+  { id: 'PAID', label: 'Платёж в обработке' },
+  { id: 'RELEASED', label: 'Ожидается перевод монет' },
+  { id: 'COMPLETED', label: 'Завершено' },
 ];
 
 function stepIndex(status: string) {
@@ -28,7 +28,7 @@ export function DealTimeline({ status }: { status: string }) {
   if (current < 0) return null;
 
   return (
-    <div className="rounded-[14px] border border-white/[0.06] bg-[#0B0E14] p-4">
+    <div className="rounded-[14px] border border-white/[0.06] bg-[#10131D] p-4">
       <div className="text-[11px] font-bold uppercase tracking-wider text-nexora-muted mb-4">
         Прогресс сделки
       </div>
@@ -46,18 +46,20 @@ export function DealTimeline({ status }: { status: string }) {
                   <div className={`h-full ${i <= current ? 'bg-nexora-neon' : 'bg-white/10'}`} />
                 </div>
               )}
-              <motion.div
-                initial={false}
-                animate={{ scale: active ? 1.1 : 1 }}
-                className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 ${
+              <div
+                className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 transition-transform duration-75 ${
                   done
                     ? 'border-nexora-neon bg-nexora-neon/20 text-nexora-neon'
-                    : 'border-white/15 bg-[#10131C] text-nexora-muted'
-                }`}
+                    : 'border-white/15 bg-[#10131D] text-nexora-muted'
+                } ${active ? 'scale-110' : ''}`}
               >
-                {done && i < current ? <Check size={12} strokeWidth={3} /> : <span className="text-[10px] font-bold">{i + 1}</span>}
-              </motion.div>
-              <span className={`mt-2 text-[10px] font-medium text-center ${done ? 'text-white' : 'text-nexora-muted'}`}>
+                {done && i < current ? (
+                  <Check size={12} strokeWidth={3} />
+                ) : (
+                  <span className="text-[10px] font-bold">{i + 1}</span>
+                )}
+              </div>
+              <span className={`mt-2 text-[10px] font-medium text-center max-w-[72px] ${done ? 'text-white' : 'text-nexora-muted'}`}>
                 {s.label}
               </span>
             </div>

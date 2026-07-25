@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { apiGet, apiPost, ApiError } from '@/lib/api';
+import { Paperclip } from 'lucide-react';
+import { apiGet, apiPost, apiUpload, resolveUploadUrl, ApiError } from '@/lib/api';
 import { getSocket, useSocketEvent } from '@/lib/socket';
 import { useAuth } from '@/lib/auth';
 import { Card, Spinner, Badge, Field, Modal, PageHeader } from '@/components/ui';
@@ -31,8 +32,13 @@ export default function DealDetailPage() {
   const [error, setError] = useState('');
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
+  const [payOpen, setPayOpen] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [, forceTick] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const chatFileRef = useRef<HTMLInputElement>(null);
+  const proofFileRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const d = await apiGet<Deal>(`/deals/${id}`);
@@ -50,7 +56,6 @@ export default function DealDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // countdown ticker
   useEffect(() => {
     const t = setInterval(() => forceTick((v) => v + 1), 1000);
     return () => clearInterval(t);
@@ -80,11 +85,43 @@ export default function DealDetailPage() {
     }
   };
 
-  const send = async () => {
-    if (!msg.trim()) return;
-    const body = msg;
+  const markPaid = async () => {
+    setError('');
+    setUploading(true);
+    try {
+      let proofUrl: string | undefined;
+      if (proofFile) {
+        const uploaded = await apiUpload(proofFile);
+        proofUrl = uploaded.url;
+      }
+      await apiPost(`/deals/${id}/paid`, proofUrl ? { proofUrl } : {});
+      setPayOpen(false);
+      setProofFile(null);
+      await load();
+      toast('success', 'Оплата отмечена');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Ошибка';
+      setError(message);
+      toast('error', message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const send = async (attachmentUrl?: string) => {
+    const body = msg.trim() || (attachmentUrl ? 'Вложение' : '');
+    if (!body && !attachmentUrl) return;
     setMsg('');
-    await apiPost(`/deals/${id}/messages`, { body }).catch(() => {});
+    await apiPost(`/deals/${id}/messages`, { body, attachmentUrl }).catch(() => {});
+  };
+
+  const sendAttachment = async (file: File) => {
+    try {
+      const uploaded = await apiUpload(file);
+      await send(uploaded.url);
+    } catch (err) {
+      toast('error', err instanceof ApiError ? err.message : 'Ошибка загрузки');
+    }
   };
 
   if (!deal || !user) return <Spinner />;
@@ -92,7 +129,7 @@ export default function DealDetailPage() {
   const isBuyer = deal.buyer.id === user.id;
   const isSeller = deal.seller.id === user.id;
   const canPay = isBuyer && deal.status === 'CREATED';
-  const canRelease = isSeller && (deal.status === 'PAID' || deal.status === 'CREATED');
+  const canRelease = isSeller && deal.status === 'PAID';
   const canCancel = isBuyer && deal.status === 'CREATED';
   const canDispute = (isBuyer || isSeller) && ['CREATED', 'PAID'].includes(deal.status);
 
@@ -113,13 +150,11 @@ export default function DealDetailPage() {
         <Badge className={dealStatusColor[deal.status]}>{dealStatusLabel[deal.status]}</Badge>
       </div>
 
-      <div className="rounded-[14px] border border-white/[0.06] bg-[#10131C] p-4">
+      <div className="rounded-[14px] border border-white/[0.06] bg-nexora-card p-4">
         <div className="text-[11px] font-bold uppercase tracking-wider text-nexora-muted mb-3">
           Контрагент
         </div>
-        <TraderRow
-          name={counterparty.displayName ?? counterparty.username}
-        />
+        <TraderRow name={counterparty.displayName ?? counterparty.username} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -152,7 +187,7 @@ export default function DealDetailPage() {
             {error && <div className="text-sm text-nexora-error mb-3">{error}</div>}
             <div className="space-y-2">
               {canPay && (
-                <RippleButton variant="primary" onClick={() => action('paid')} className="w-full">
+                <RippleButton variant="primary" onClick={() => setPayOpen(true)} className="w-full">
                   Я оплатил
                 </RippleButton>
               )}
@@ -162,13 +197,16 @@ export default function DealDetailPage() {
                 </RippleButton>
               )}
               {canCancel && (
-                <button onClick={() => action('cancel', { reason: 'Отменено покупателем' })} className="btn-secondary w-full">
+                <button
+                  onClick={() => action('cancel', { reason: 'Отменено покупателем' })}
+                  className="btn-secondary w-full"
+                >
                   Отменить
                 </button>
               )}
               {canDispute && (
                 <button onClick={() => setDisputeOpen(true)} className="btn-danger w-full">
-                  Открыть спор
+                  Открыть апелляцию
                 </button>
               )}
               {['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(deal.status) && (
@@ -188,13 +226,32 @@ export default function DealDetailPage() {
             </div>
             <div className="mt-3 flex gap-2 border-t border-white/[0.06] pt-3">
               <input
+                ref={chatFileRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) sendAttachment(f);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => chatFileRef.current?.click()}
+                className="btn-ghost px-3"
+                aria-label="Прикрепить файл"
+              >
+                <Paperclip size={18} />
+              </button>
+              <input
                 className="input flex-1"
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
                 placeholder="Введите сообщение..."
               />
-              <RippleButton variant="primary" onClick={send}>
+              <RippleButton variant="primary" onClick={() => send()}>
                 Отправить
               </RippleButton>
             </div>
@@ -202,9 +259,34 @@ export default function DealDetailPage() {
         </div>
       </div>
 
-      <Modal open={disputeOpen} onClose={() => setDisputeOpen(false)} title="Открыть спор">
+      <Modal open={payOpen} onClose={() => setPayOpen(false)} title="Подтверждение оплаты">
         <div className="space-y-4">
-          <Field label="Причина спора">
+          <p className="text-sm text-nexora-muted">
+            Переведите {fmtFiat(deal.fiatAmount)} {deal.fiat} по реквизитам и приложите чек об оплате.
+          </p>
+          <Field label="Чек / скриншот оплаты">
+            <input
+              ref={proofFileRef}
+              type="file"
+              accept="image/*,.pdf"
+              className="input"
+              onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+            />
+          </Field>
+          <RippleButton
+            variant="primary"
+            onClick={markPaid}
+            disabled={uploading}
+            className="w-full py-3"
+          >
+            {uploading ? 'Загрузка...' : 'Подтвердить оплату'}
+          </RippleButton>
+        </div>
+      </Modal>
+
+      <Modal open={disputeOpen} onClose={() => setDisputeOpen(false)} title="Открыть апелляцию">
+        <div className="space-y-4">
+          <Field label="Причина апелляции">
             <textarea
               className="input min-h-[100px]"
               value={disputeReason}
@@ -219,7 +301,7 @@ export default function DealDetailPage() {
             }}
             className="btn-danger w-full"
           >
-            Отправить спор администратору
+            Отправить апелляцию
           </button>
         </div>
       </Modal>
@@ -242,6 +324,9 @@ function ChatBubble({ m, isMine }: { m: ChatMessage; isMine: boolean }) {
       <div className="text-center">
         <span className="inline-block rounded-full bg-white/[0.06] px-3 py-1 text-xs text-nexora-muted">
           {m.body}
+          {m.attachmentUrl && (
+            <AttachmentPreview url={m.attachmentUrl} className="mt-2" />
+          )}
         </span>
       </div>
     );
@@ -250,10 +335,34 @@ function ChatBubble({ m, isMine }: { m: ChatMessage; isMine: boolean }) {
     <div className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[75%] ${isMine ? 'chat-bubble-mine' : 'chat-bubble-theirs'}`}>
         <div>{m.body}</div>
+        {m.attachmentUrl && <AttachmentPreview url={m.attachmentUrl} className="mt-2" />}
         <div className={`text-[10px] mt-1.5 ${isMine ? 'text-white/50' : 'text-nexora-muted'}`}>
           {fmtDate(m.createdAt)}
         </div>
       </div>
     </div>
+  );
+}
+
+function AttachmentPreview({ url, className = '' }: { url: string; className?: string }) {
+  const full = resolveUploadUrl(url);
+  const isImage = /\.(jpg|jpeg|png|webp|gif)$/i.test(url);
+  if (isImage) {
+    return (
+      <a href={full} target="_blank" rel="noopener noreferrer" className={`block ${className}`}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={full} alt="Вложение" className="max-h-40 rounded-lg border border-white/10" />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={full}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`text-xs text-nexora-accent underline ${className}`}
+    >
+      Открыть вложение
+    </a>
   );
 }

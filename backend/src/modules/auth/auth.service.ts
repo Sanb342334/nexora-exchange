@@ -3,17 +3,22 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
+import { isAllowedCountry, isFiatAllowedForCountry } from '../../common/countries';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WalletsService } from '../wallets/wallets.service';
 import { TokenService } from './token.service';
-import { ChangePasswordDto, LoginDto } from './dto/auth.dto';
+import { ChangePasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
+    private readonly wallets: WalletsService,
+    private readonly config: ConfigService,
   ) {}
 
   static hashPassword(password: string): Promise<string> {
@@ -46,6 +51,50 @@ export class AuthService {
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
+
+    const pair = await this.tokens.issueTokens(
+      { sub: user.id, username: user.username, role: user.role },
+      meta,
+    );
+    return { ...pair, user: this.sanitize(user) };
+  }
+
+  async register(dto: RegisterDto, meta?: { userAgent?: string; ip?: string }) {
+    if (!isAllowedCountry(dto.countryCode)) {
+      throw new BadRequestException('Страна недоступна для регистрации');
+    }
+    if (!isFiatAllowedForCountry(dto.countryCode, dto.preferredFiat)) {
+      throw new BadRequestException('Валюта недоступна для выбранной страны');
+    }
+
+    const exists = await this.prisma.user.findUnique({ where: { username: dto.username } });
+    if (exists) throw new BadRequestException('Такой логин уже занят');
+
+    if (dto.email) {
+      const emailTaken = await this.prisma.user.findUnique({ where: { email: dto.email } });
+      if (emailTaken) throw new BadRequestException('Email уже используется');
+    }
+
+    const baseAsset = this.config.get<string>('economics.baseAsset') ?? 'USDT';
+    const passwordHash = await AuthService.hashPassword(dto.password);
+
+    const user = await this.prisma.user.create({
+      data: {
+        username: dto.username,
+        email: dto.email,
+        passwordHash,
+        displayName: dto.displayName ?? dto.username,
+        role: 'TRADER',
+        status: 'ACTIVE',
+        countryCode: dto.countryCode,
+        preferredFiat: dto.preferredFiat,
+        preferredAsset: baseAsset,
+        locale: dto.locale ?? 'en',
+      },
+    });
+
+    await this.wallets.ensureWallet(user.id, baseAsset);
+    await this.wallets.ensureWallet(user.id, dto.preferredFiat);
 
     const pair = await this.tokens.issueTokens(
       { sub: user.id, username: user.username, role: user.role },
@@ -121,6 +170,10 @@ export class AuthService {
     status: string;
     displayName: string | null;
     totpEnabled: boolean;
+    countryCode?: string | null;
+    preferredFiat?: string | null;
+    preferredAsset?: string | null;
+    locale?: string | null;
   }) {
     return {
       id: user.id,
@@ -130,6 +183,10 @@ export class AuthService {
       status: user.status,
       displayName: user.displayName,
       totpEnabled: user.totpEnabled,
+      countryCode: user.countryCode ?? null,
+      preferredFiat: user.preferredFiat ?? null,
+      preferredAsset: user.preferredAsset ?? null,
+      locale: user.locale ?? null,
     };
   }
 }

@@ -229,7 +229,7 @@ export class DealsService {
     return { ...deal, buyer, seller };
   }
 
-  async markPaid(userId: string, dealId: string) {
+  async markPaid(userId: string, dealId: string, proofUrl?: string) {
     const deal = await this.getRaw(dealId);
     if (deal.buyerId !== userId) throw new ForbiddenException('Только покупатель может отметить оплату');
     if (deal.status !== DealStatus.CREATED) {
@@ -237,10 +237,18 @@ export class DealsService {
     }
     const updated = await this.prisma.deal.update({
       where: { id: dealId },
-      data: { status: DealStatus.PAID, paidAt: new Date() },
+      data: {
+        status: DealStatus.PAID,
+        paidAt: new Date(),
+        ...(proofUrl ? { proofUrl } : {}),
+      },
       include: dealInclude,
     });
-    await this.systemMessage(dealId, 'Покупатель отметил оплату. Ожидается подтверждение продавца.');
+    await this.systemMessage(
+      dealId,
+      'Покупатель отметил оплату. Ожидается подтверждение продавца.',
+      proofUrl,
+    );
     const seller = await this.prisma.user.findUnique({ where: { id: deal.sellerId } });
     if (seller?.isPersona) {
       await this.platform.notifyAdmins(
@@ -265,8 +273,8 @@ export class DealsService {
     if (sellerIsPersona && !isAdmin) {
       throw new ForbiddenException('Подтверждение платформенной сделки выполняет оператор');
     }
-    if (!([DealStatus.PAID, DealStatus.CREATED] as DealStatus[]).includes(deal.status)) {
-      throw new BadRequestException('Сделку нельзя подтвердить в текущем статусе');
+    if (deal.status !== DealStatus.PAID) {
+      throw new BadRequestException('Сделку можно подтвердить только после оплаты');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -454,11 +462,20 @@ export class DealsService {
   async listMine(userId: string) {
     const deals = await this.prisma.deal.findMany({
       where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
-      include: dealInclude,
+      include: {
+        ...dealInclude,
+        chatMessages: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
-    return deals.map((d) => this.presentDeal(d, userId));
+    return deals.map((d) => {
+      const { chatMessages, ...rest } = d;
+      return {
+        ...this.presentDeal(rest, userId),
+        lastMessage: chatMessages[0] ?? null,
+      };
+    });
   }
 
   listAll(status?: DealStatus) {
@@ -486,9 +503,15 @@ export class DealsService {
     return message;
   }
 
-  private async systemMessage(dealId: string, body: string) {
+  private async systemMessage(dealId: string, body: string, attachmentUrl?: string) {
     const message = await this.prisma.chatMessage.create({
-      data: { dealId, senderId: await this.systemSenderId(), body, isSystem: true },
+      data: {
+        dealId,
+        senderId: await this.systemSenderId(),
+        body,
+        isSystem: true,
+        attachmentUrl,
+      },
     });
     this.emitDeal(dealId, 'chat:message', message);
   }

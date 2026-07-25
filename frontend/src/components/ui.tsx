@@ -107,24 +107,27 @@ export function Modal({
 }) {
   if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} glass-card p-6 shadow-glow`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-5">
-          {title ? <h3 className="font-display text-lg font-bold text-white">{title}</h3> : <div />}
-          <button onClick={onClose} className="text-nexora-muted hover:text-white text-xl leading-none ml-auto">
-            ×
-          </button>
-        </div>
-        {children}
-      </motion.div>
+    <div className="fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex min-h-full items-end justify-center p-0 sm:items-center sm:p-4" onClick={onClose}>
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`modal-panel w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-[20px] border border-white/[0.08] bg-[#10131C] p-5 shadow-glow sm:rounded-[16px] sm:p-6`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-5 flex items-center justify-between">
+            {title ? <h3 className="font-display text-lg font-bold text-white">{title}</h3> : <div />}
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-auto text-2xl leading-none text-nexora-muted hover:text-white"
+            >
+              ×
+            </button>
+          </div>
+          {children}
+        </motion.div>
+      </div>
     </div>
   );
 }
