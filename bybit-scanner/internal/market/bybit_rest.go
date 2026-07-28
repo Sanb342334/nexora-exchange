@@ -45,6 +45,8 @@ type tickerItem struct {
 	Symbol       string `json:"symbol"`
 	Turnover24h  string `json:"turnover24h"`
 	LastPrice    string `json:"lastPrice"`
+	Bid1Price    string `json:"bid1Price"`
+	Ask1Price    string `json:"ask1Price"`
 	FundingRate  string `json:"fundingRate"`
 	OpenInterest string `json:"openInterest"`
 }
@@ -118,6 +120,54 @@ func (c *RESTClient) FetchActiveUSDTPairs(ctx context.Context, minVolume24H floa
 	c.log.Scanner.Info().Int("count", len(symbols)).Float64("min_volume_24h", minVolume24H).
 		Msg("loaded active USDT linear pairs")
 	return symbols, nil
+}
+
+// FetchSpotQuotes returns the executable top-of-book for the supplied symbols.
+// Spot is read-only here; execution remains disabled until a paired executor
+// and reconciliation pass the promotion gates.
+func (c *RESTClient) FetchSpotQuotes(ctx context.Context, symbols []string) (map[string]SpotQuote, error) {
+	url := fmt.Sprintf("%s/v5/market/tickers?category=spot", c.baseURL)
+	body, err := c.doGET(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var resp apiResult
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode spot tickers: %w", err)
+	}
+	if resp.RetCode != 0 {
+		return nil, fmt.Errorf("spot tickers error: %s", resp.RetMsg)
+	}
+	var result tickerResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(symbols))
+	for _, symbol := range symbols {
+		wanted[symbol] = struct{}{}
+	}
+	out := make(map[string]SpotQuote, len(wanted))
+	now := time.Now().UTC()
+	for _, item := range result.List {
+		if _, ok := wanted[item.Symbol]; !ok {
+			continue
+		}
+		bid, _ := strconv.ParseFloat(item.Bid1Price, 64)
+		ask, _ := strconv.ParseFloat(item.Ask1Price, 64)
+		last, _ := strconv.ParseFloat(item.LastPrice, 64)
+		if bid <= 0 || ask <= 0 {
+			continue
+		}
+		out[item.Symbol] = SpotQuote{Bid: bid, Ask: ask, Last: last, UpdatedAt: now}
+	}
+	return out, nil
+}
+
+type SpotQuote struct {
+	Bid       float64
+	Ask       float64
+	Last      float64
+	UpdatedAt time.Time
 }
 
 func (c *RESTClient) FetchOpenInterest(ctx context.Context, symbol string) (float64, time.Time, error) {

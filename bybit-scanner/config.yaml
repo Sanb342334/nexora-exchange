@@ -55,8 +55,10 @@ risk:
       live: 4
   limits:
     daily_loss_limit_pct:
-      demo: 5.0
+      demo: 15.0
       live: 2.0
+  demo:
+    allow_on_kill_switch: true
   live:
     require_explicit_enable: true
     min_score: 75
@@ -65,7 +67,12 @@ strategy:
   enabled: true
   confirm_min_sec: 30
   confirm_max_sec: 120
+  fast_confirm_min_sec: 5
+  fast_confirm_max_sec: 20
+  fast_min_score: 80
+  data_fresh_sec: 2
   min_vol_1m_usdt: 30000
+  min_price_change_pct: 0.25
   min_score_impulse: 65
   min_score_confirmed: 70
   min_score_hot: 85
@@ -76,14 +83,117 @@ strategy:
   impulse_alerts: true
   hot_bypass_confirm: true
 
+momentum_scalper:
+  # Separate strict Tier A pipeline; it neither reuses nor changes FADE logic.
+  enabled: true
+  # Audit/paper only. No live or demo execution is authorized by this pipeline.
+  paper_only: true
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  freshness_ms: 1500
+  min_price_change_pct: 0.20
+  min_orderflow_usdt: 50000
+  min_oi_change_pct: 0.15
+  max_spread_pct: 0.05
+  # When enabled, Bybit `pu` continuity and fresh depth are mandatory.
+  require_orderbook: false
+  orderbook_max_age_ms: 1000
+  orderbook_min_depth_usdt: 100000
+  cooldown_sec: 30
+
+market_context:
+  # Confirmed BTC 1m/5m/15m/1h context is written to the signal ledger only.
+  enabled: true
+  orderbook:
+    # Opt in only after a symbol is verified Tier A. This remains shadow-only.
+    enabled: false
+    symbols: []
+    max_age_ms: 2000
+
+training:
+  # Audit-only dataset collection; these fields do not affect trading decisions.
+  enabled: true
+  feature_version: training-features/v1
+  label_version: outcome-label/v1
+  # Version every cost assumption so labels and research output remain auditable.
+  cost_version: bybit-demo-linear-taker/v1
+  # bps means 0.01%. Fees apply once on entry and exit; slippage is charged per
+  # side. These conservative Bybit Demo linear defaults total 18 bps round trip.
+  entry_fee_bps: 6
+  exit_fee_bps: 6
+  slippage_bps: 3
+
+adaptive_exit:
+  # Bybit Demo only. Applies exclusively to positions opened by this bot.
+  enabled: true
+  breakeven_at_r: 1.0
+  breakeven_lock_r: 0.05
+  trail_start_r: 1.5
+  trail_distance_r: 0.75
+  min_stop_step_r: 0.10
+  tp_extend_at_r: 1.8
+  tp_extend_to_r: 2.5
+  min_update_interval_sec: 15
+
+carry:
+  enabled: true
+  paper_enabled: true
+  min_net_carry_bps: 20
+  fee_bps_per_leg: 10
+  slippage_bps_per_leg: 5
+  funding_uncertainty_bps: 10
+  max_holding_minutes: 480
+  max_unhedged_seconds: 3
+
+indicator_mtf:
+  enabled: true
+  min_bars: 30
+  min_volume_usdt_5m: 30000
+  min_indicator_votes: 4
+  min_confirm_15m: 3
+  max_spread_pct: 0.12
+  rsi_period: 14
+  cooldown_sec: 120
+
+promotion:
+  min_closed_trades: 100
+  min_profit_factor: 1.10
+  min_expectancy_r: 0.05
+  max_drawdown_usdt: 250
+  max_execution_failures: 0
+
+performance_gates:
+  # Reporting and operator review only. No outcome can enable Demo or live.
+  enabled: true
+  minimum_independent: 100
+  minimum_expectancy_bps: 0
+  minimum_profit_factor: 1.10
+  maximum_drawdown_bps: 0
+  maximum_missing_rate: 0.05
+  # New setups remain shadow/paper and are Demo-ineligible by default.
+  demo_eligible: false
+
 traders:
   enabled: true
   equity_per_trader_usdt: 10000
   profiles:
+    - id: tier-a-momentum
+      name: "Tier A Momentum"
+      emoji: "🚀"
+      description: "Изолированный строгий momentum scalper, только paper audit"
+      strategy: momentum_scalper_tier_a
+      min_score: 100
+      min_vol_1m_usdt: 0
+      min_triggers: 3
+      execution_mode: paper
+      leverage_max: 1
+      risk_mult: 0.1
+      max_open: 1
+      min_rr: 1.0
     - id: sniper
       name: "Саша"
       emoji: "🎯"
       description: "Снайпер — только HOT, мало сделок"
+      execution_mode: paper
       min_score: 85
       min_vol_1m_usdt: 100000
       leverage_max: 5
@@ -93,16 +203,18 @@ traders:
       name: "Дима"
       emoji: "⚖️"
       description: "Стратег — баланс качества и ROI"
+      execution_mode: paper
       min_score: 75
       min_vol_1m_usdt: 50000
       leverage_max: 10
     - id: agressor
       name: "Ваня"
       emoji: "🔥"
-      description: "Агрессор — fade, низкий порог, 50x"
+      description: "Агрессор — fade, низкий порог, ограниченный риск"
+      execution_mode: paper
       min_score: 55
       min_vol_1m_usdt: 20000
-      leverage_max: 50
+      leverage_max: 10
       allow_fade: true
       min_sl_liq_buffer_pct: 0.08
       risk_mult: 1.6
@@ -111,6 +223,7 @@ traders:
       name: "Коля"
       emoji: "⚡"
       description: "Пульс+ — momentum CONFIRM/HOT, 10+ сделок/день"
+      execution_mode: paper
       min_score: 48
       min_vol_1m_usdt: 12000
       min_triggers: 1
@@ -122,17 +235,47 @@ traders:
       min_sl_liq_buffer_pct: 0.10
     - id: misha
       name: "Миша"
-      emoji: "🔬"
-      description: "Рентген ленты — tape confluence, 30-50 микро-сделок/день"
+      emoji: "📼"
+      description: "Tape/FADE sync, adaptive learn, до 100 сделок/день"
       strategy: tape_sync
-      min_score: 40
-      max_score: 62
-      min_vol_1m_usdt: 8000
-      min_tape_points: 3
-      leverage_max: 8
-      min_rr: 1.05
-      risk_mult: 0.35
-      max_open: 30
-      max_notional_usdt: 250
-      min_sl_liq_buffer_pct: 0.06
+      execution_mode: demo
+      adaptive_learn: true
+      max_trades_per_day: 100
+      min_score: 32
+      max_score: 70
+      min_vol_1m_usdt: 5000
+      min_tape_points: 2
+      max_spread_pct: 0.35
+      leverage_max: 10
+      min_rr: 0.75
+      min_sl_distance_pct: 0.03
+      risk_mult: 0.5
+      max_open: 40
+      max_notional_usdt: 200
+      min_sl_liq_buffer_pct: 0.05
       allow_fade: true
+    - id: katya
+      name: "Катя"
+      emoji: "⚖️"
+      description: "Spot↔Linear арбитраж и хедж, депозит $1000"
+      strategy: carry_arbitrage
+      execution_mode: paper
+      equity_usdt: 1000
+      min_score: 25
+      leverage_max: 2
+      risk_mult: 0.35
+      max_open: 5
+      min_rr: 0.5
+      max_notional_usdt: 900
+    - id: oleg
+      name: "Олег"
+      emoji: "📊"
+      description: "5 индикаторов · MTF 5m/15m · объёмные входы"
+      strategy: indicator_mtf
+      execution_mode: paper
+      min_score: 60
+      min_vol_1m_usdt: 20000
+      leverage_max: 12
+      risk_mult: 0.8
+      max_open: 8
+      min_rr: 1.2

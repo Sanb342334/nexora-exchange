@@ -3,13 +3,15 @@ package strategy
 import "bybit-scanner/internal/analyzer"
 
 const (
-	AlertImpulse   = "IMPULSE"
-	AlertConfirmed = "CONFIRMED"
-	AlertFade      = "FADE"
-	AlertHot       = "HOT"
+	AlertImpulse     = "IMPULSE"
+	AlertConfirmed   = "CONFIRMED"
+	AlertFade        = "FADE"
+	AlertHot         = "HOT"
+	AlertInvalidated = "INVALIDATED"
 
-	ActionLong  = "LONG"
-	ActionShort = "SHORT"
+	ActionLong    = "LONG"
+	ActionShort   = "SHORT"
+	ActionNoTrade = "NO_TRADE"
 )
 
 // Outcome is a strategy-layer decision ready for risk evaluation.

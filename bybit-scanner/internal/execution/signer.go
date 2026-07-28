@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +30,8 @@ func signGet(secret, apiKey string, recvWindow int, query string) (timestamp, si
 }
 
 func ensureDemoHost(baseURL string) error {
-	if !strings.Contains(baseURL, "api-demo.bybit.com") {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || !strings.EqualFold(parsed.Hostname(), "api-demo.bybit.com") || parsed.Scheme != "https" {
 		return fmt.Errorf("execution blocked: base URL must be api-demo.bybit.com, got %s", baseURL)
 	}
 	return nil

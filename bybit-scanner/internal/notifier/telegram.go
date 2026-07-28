@@ -36,35 +36,38 @@ func newTelegramHTTPClient(timeout time.Duration) *http.Client {
 }
 
 const (
-	btnLogs      = "📋 Логи"
-	btnTest      = "🧪 Тестовый сигнал"
-	btnStats     = "📊 Статус"
-	btnTop       = "🏆 Топ сигналов"
-	btnCheck     = "🔍 Проверка"
-	btnDemoTrade = "💹 Тест autotrade"
-	btnTraders   = "👥 Трейдеры"
-	btnSignalLogs = "📡 Логи сигналов"
-	btnMute      = "🔇 Мут 1ч"
-	btnUnmute    = "🔔 Снять мут"
+	btnLogs        = "📋 Логи"
+	btnTest        = "🧪 Тестовый сигнал"
+	btnStats       = "📊 Статус"
+	btnTop         = "🏆 Топ сигналов"
+	btnCheck       = "🔍 Проверка"
+	btnDemoTrade   = "💹 Тест autotrade"
+	btnPanel       = "🖥 Панель"
+	btnTraders     = "👥 Трейдеры"
+	btnSignalLogs  = "📡 Логи сигналов"
+	btnMute        = "🔇 Мут 1ч"
+	btnUnmute      = "🔔 Снять мут"
 	btnUnsubscribe = "🔕 Отписаться"
 )
 
 type Notifier struct {
-	cfg          *config.Config
-	log          *logger.Loggers
-	health       *health.Tracker
-	journal      *paper.Journal
-	subscribers  *SubscriberStore
-	demoTrader   *execution.DemoTrader
-	traderMgr    *traders.Manager
-	httpClient   *http.Client
-	pollClient   *http.Client
-	jobs         chan risk.TradeRecommendation
-	digestBuf    []risk.TradeRecommendation
-	symbolCount  int
-	seenUpdates  map[int]struct{}
-	mu           sync.Mutex
-	wg           sync.WaitGroup
+	cfg             *config.Config
+	log             *logger.Loggers
+	health          *health.Tracker
+	journal         *paper.Journal
+	subscribers     *SubscriberStore
+	demoTrader      *execution.DemoTrader
+	traderMgr       *traders.Manager
+	httpClient      *http.Client
+	pollClient      *http.Client
+	jobs            chan risk.TradeRecommendation
+	digestBuf       []risk.TradeRecommendation
+	symbolCount     int
+	seenUpdates     map[int]struct{}
+	mu              sync.Mutex
+	positionMu      sync.Mutex
+	positionActions map[string]positionAction
+	wg              sync.WaitGroup
 }
 
 func New(cfg *config.Config, log *logger.Loggers, healthTracker *health.Tracker, journal *paper.Journal) *Notifier {
@@ -75,12 +78,13 @@ func New(cfg *config.Config, log *logger.Loggers, healthTracker *health.Tracker,
 
 	return &Notifier{
 		cfg: cfg, log: log, health: healthTracker, journal: journal,
-		subscribers: subs,
-		httpClient:  newTelegramHTTPClient(30 * time.Second),
-		pollClient:  newTelegramHTTPClient(75 * time.Second),
-		jobs:        make(chan risk.TradeRecommendation, 256),
-		digestBuf:   make([]risk.TradeRecommendation, 0, 64),
-		seenUpdates: make(map[int]struct{}),
+		subscribers:     subs,
+		httpClient:      newTelegramHTTPClient(30 * time.Second),
+		pollClient:      newTelegramHTTPClient(75 * time.Second),
+		jobs:            make(chan risk.TradeRecommendation, 256),
+		digestBuf:       make([]risk.TradeRecommendation, 0, 64),
+		seenUpdates:     make(map[int]struct{}),
+		positionActions: make(map[string]positionAction),
 	}
 }
 
@@ -205,11 +209,14 @@ func (n *Notifier) dispatchMulti(ctx context.Context, results []traders.Result) 
 		if !r.Skipped {
 			sym = r.Rec.Signal.Symbol
 			score = r.Rec.Signal.Score
+			if n.health != nil {
+				n.health.RecordSignal(sym, score, r.Rec.Signal.Movement)
+			}
 			break
 		}
 	}
 	n.logMultiTrader(results)
-	n.broadcastSignal(ctx, score, text, buildSignalInlineKeyboard(sym))
+	n.broadcastSignal(ctx, sym, score, text, buildSignalInlineKeyboard(sym))
 }
 
 func (n *Notifier) logMultiTrader(results []traders.Result) {
@@ -239,12 +246,21 @@ func (n *Notifier) Enqueue(rec risk.TradeRecommendation) {
 }
 
 func (n *Notifier) EnqueueWatch(sig analyzer.Signal) {
+	n.log.Signals.Info().
+		Str("signal_id", sig.SignalID).
+		Str("symbol", sig.Symbol).
+		Int("score", sig.Score).
+		Str("alert_type", sig.AlertType).
+		Str("action", sig.TradeAction).
+		Str("setup", sig.SetupType).
+		Strs("reasons", sig.Reasons).
+		Msg("strategy decision")
 	if n.cfg.DryRun {
 		return
 	}
 	text := formatWatchHTML(sig)
 	keyboard := buildSignalInlineKeyboard(sig.Symbol)
-	n.broadcastSignal(context.Background(), sig.Score, text, keyboard)
+	n.broadcastSignal(context.Background(), sig.Symbol, sig.Score, text, keyboard)
 }
 
 func (n *Notifier) worker(ctx context.Context) {
@@ -313,13 +329,13 @@ func (n *Notifier) dispatch(ctx context.Context, rec risk.TradeRecommendation) {
 
 	text := risk.FormatTelegramHTML(rec)
 	keyboard := buildSignalInlineKeyboard(sig.Symbol)
-	n.broadcastSignal(ctx, sig.Score, text, keyboard)
+	n.broadcastSignal(ctx, sig.Symbol, sig.Score, text, keyboard)
 }
 
-func (n *Notifier) broadcastSignal(ctx context.Context, score int, text string, keyboard map[string]interface{}) {
+func (n *Notifier) broadcastSignal(ctx context.Context, symbol string, score int, text string, keyboard map[string]interface{}) {
 	for _, chatID := range n.subscribers.All() {
 		if n.subscribers.IsMuted(chatID) || (!n.subscribers.Allows(chatID, score, n.cfg.TelegramMinNotifyScore()) &&
-			!n.subscribers.WantsSignalLogs(chatID)) {
+			!n.subscribers.WantsSignalLogs(chatID)) || n.subscribers.IgnoresSymbol(chatID, symbol) {
 			continue
 		}
 		if err := n.sendToChat(ctx, chatID, text, keyboard); err != nil {
@@ -409,14 +425,14 @@ func (n *Notifier) sendToChatOnce(ctx context.Context, chatID int64, text string
 func mainMenuKeyboard() map[string]interface{} {
 	return map[string]interface{}{
 		"keyboard": [][]map[string]string{
-			{{"text": btnCheck}, {"text": btnTest}},
+			{{"text": btnPanel}, {"text": btnCheck}, {"text": btnTest}},
 			{{"text": btnTraders}, {"text": btnDemoTrade}},
 			{{"text": btnSignalLogs}, {"text": btnMute}},
 			{{"text": btnUnmute}},
 			{{"text": btnLogs}, {"text": btnStats}},
 			{{"text": btnTop}, {"text": btnUnsubscribe}},
 		},
-		"resize_keyboard":  true,
+		"resize_keyboard":   true,
 		"one_time_keyboard": false,
 	}
 }
@@ -431,6 +447,10 @@ func buildSignalInlineKeyboard(symbol string) map[string]interface{} {
 			{
 				{"text": "📈 Bybit", "url": bybitURL},
 				{"text": "📊 TradingView", "url": tvURL},
+			},
+			{
+				{"text": "⭐ Избранное", "callback_data": "favorite:" + symbol},
+				{"text": "🔕 Игнорировать", "callback_data": "ignore:" + symbol},
 			},
 		},
 	}
@@ -600,8 +620,8 @@ type tgCallback struct {
 }
 
 type tgUpdate struct {
-	UpdateID      int     `json:"update_id"`
-	Message       *tgMessage `json:"message"`
+	UpdateID      int         `json:"update_id"`
+	Message       *tgMessage  `json:"message"`
 	CallbackQuery *tgCallback `json:"callback_query"`
 }
 
@@ -667,6 +687,10 @@ func (n *Notifier) handleMessage(ctx context.Context, msg *tgMessage) {
 		n.handleStop(ctx, chatID)
 	case cmd == "/help":
 		n.sendHelp(ctx, chatID)
+	case text == btnPanel || cmd == "/panel":
+		n.sendPanel(ctx, chatID)
+	case strings.HasPrefix(cmd, "/position"):
+		n.handleManualPositionCommand(chatID, cmd)
 	case text == btnLogs || cmd == "/logs":
 		n.sendLogs(ctx, chatID)
 	case text == btnTest || cmd == "/test":
@@ -685,7 +709,7 @@ func (n *Notifier) handleMessage(ctx context.Context, msg *tgMessage) {
 		n.sendStats(ctx, chatID)
 	case text == btnTop || cmd == "/top":
 		n.sendTop(ctx, chatID)
-	case isCheckButton(text) || cmd == "/check":
+	case isCheckButton(text) || cmd == "/check" || cmd == "/health":
 		n.sendCheck(ctx, chatID)
 	case cmd == "/unmute" || text == btnUnmute:
 		n.clearMute(ctx, chatID)
@@ -700,7 +724,15 @@ func (n *Notifier) handleMessage(ctx context.Context, msg *tgMessage) {
 }
 
 func (n *Notifier) handleCallback(ctx context.Context, cb *tgCallback) {
+	defer n.answerCallback(ctx, cb.ID)
 	chatID := cb.Message.Chat.ID
+	if chatID == 0 || !n.subscribers.IsSubscribed(chatID) || !validCallback(cb.Data) {
+		n.log.Errors.Warn().Int64("chat_id", chatID).Msg("rejected telegram callback")
+		return
+	}
+	if n.routePanelCallback(ctx, chatID, cb.Data) {
+		return
+	}
 	switch {
 	case cb.Data == "logs":
 		n.sendLogs(ctx, chatID)
@@ -714,11 +746,26 @@ func (n *Notifier) handleCallback(ctx context.Context, cb *tgCallback) {
 		n.sendTradersOverview(ctx, chatID)
 	case cb.Data == "traders:overall":
 		n.sendTradersOverview(ctx, chatID)
+	case strings.HasPrefix(cb.Data, "history:"):
+		parts := strings.Split(strings.TrimPrefix(cb.Data, "history:"), ":")
+		if len(parts) == 2 {
+			if offset, err := strconv.Atoi(parts[1]); err == nil {
+				n.sendTraderHistoryPage(ctx, chatID, parts[0], offset)
+			}
+		}
+	case strings.HasPrefix(cb.Data, "position:"):
+		parts := strings.SplitN(strings.TrimPrefix(cb.Data, "position:"), ":", 2)
+		if len(parts) == 2 {
+			n.sendPositionDetail(ctx, chatID, parts[0], parts[1])
+		}
+	case strings.HasPrefix(cb.Data, "favorite:"):
+		n.toggleFavorite(ctx, chatID, strings.TrimPrefix(cb.Data, "favorite:"))
+	case strings.HasPrefix(cb.Data, "ignore:"):
+		n.toggleIgnoredSymbol(ctx, chatID, strings.TrimPrefix(cb.Data, "ignore:"))
 	case strings.HasPrefix(cb.Data, "trader:"):
 		id := strings.TrimPrefix(cb.Data, "trader:")
 		n.sendTraderDetail(ctx, chatID, "/trader "+id)
 	}
-	n.answerCallback(ctx, cb.ID)
 }
 
 func (n *Notifier) answerCallback(ctx context.Context, callbackID string) {
@@ -730,6 +777,30 @@ func (n *Notifier) answerCallback(ctx context.Context, callbackID string) {
 	if err == nil {
 		res.Body.Close()
 	}
+}
+
+func (n *Notifier) toggleFavorite(ctx context.Context, chatID int64, symbol string) {
+	favorite, err := n.subscribers.ToggleFavorite(chatID, symbol)
+	if err != nil {
+		n.log.Errors.Warn().Err(err).Int64("chat_id", chatID).Str("symbol", symbol).Msg("save favorite")
+	}
+	text := fmt.Sprintf("⭐ <b>%s</b> добавлен в избранное.", symbol)
+	if !favorite {
+		text = fmt.Sprintf("☆ <b>%s</b> удалён из избранного.", symbol)
+	}
+	_ = n.sendToChat(ctx, chatID, text, mainMenuKeyboard())
+}
+
+func (n *Notifier) toggleIgnoredSymbol(ctx context.Context, chatID int64, symbol string) {
+	ignored, err := n.subscribers.ToggleIgnoredSymbol(chatID, symbol)
+	if err != nil {
+		n.log.Errors.Warn().Err(err).Int64("chat_id", chatID).Str("symbol", symbol).Msg("save ignored symbol")
+	}
+	text := fmt.Sprintf("🔕 Сигналы <b>%s</b> скрыты только для этого чата.", symbol)
+	if !ignored {
+		text = fmt.Sprintf("🔔 Сигналы <b>%s</b> снова включены для этого чата.", symbol)
+	}
+	_ = n.sendToChat(ctx, chatID, text, mainMenuKeyboard())
 }
 
 func (n *Notifier) handleStart(ctx context.Context, chatID int64, user tgUser) {
@@ -787,6 +858,8 @@ func (n *Notifier) sendHelp(ctx context.Context, chatID int64) {
 	help := "🤖 <b>Bybit Scanner Bot</b>\n\n" +
 		"<b>/start</b> — подписаться на сигналы\n" +
 		"<b>/stop</b> — отписаться\n\n" +
+		"<b>/panel</b> — главный trading terminal: позиции, профили и настройки\n" +
+		"<b>/history</b>, <b>/trader</b>, <b>/stats</b> — совместимые подробные команды\n\n" +
 		"<b>Кнопки:</b>\n" +
 		"📋 Логи — последние записи сканера\n" +
 		"🧪 Тестовый сигнал — пример алерта\n" +
@@ -918,8 +991,8 @@ func (n *Notifier) sendTraderDetail(ctx context.Context, chatID int64, cmd strin
 		return
 	}
 	history, _ := n.traderMgr.History(id, 5)
-	text := traders.FormatTraderDetailHTML(p, s, n.traderMgr.EquityPerTrader(), n.traderMgr.DemoAutotradeEnabled(), history)
-	_ = n.sendToChat(ctx, chatID, text, traders.TradersInlineKeyboard())
+	text := traders.FormatTraderDetailHTML(p, s, n.traderMgr.EquityForProfile(id), n.traderMgr.DemoAutotradeEnabled(), history)
+	_ = n.sendToChat(ctx, chatID, text, traders.TraderHistoryInlineKeyboard(id, history, 0, len(history)))
 }
 
 func (n *Notifier) sendTraderHistory(ctx context.Context, chatID int64, cmd string) {
@@ -928,14 +1001,57 @@ func (n *Notifier) sendTraderHistory(ctx context.Context, chatID int64, cmd stri
 	}
 	id := strings.TrimSpace(strings.TrimPrefix(cmd, "/history"))
 	id = traders.ResolveProfileID(id)
+	_, _, ok := n.traderMgr.ProfileByID(id)
+	if !ok {
+		_ = n.sendToChat(ctx, chatID, "Трейдер не найден. Пример: /history миша", traders.TradersInlineKeyboard())
+		return
+	}
+	n.sendTraderHistoryPage(ctx, chatID, id, 0)
+}
+
+func (n *Notifier) sendTraderHistoryPage(ctx context.Context, chatID int64, id string, offset int) {
+	id = traders.ResolveProfileID(id)
 	p, s, ok := n.traderMgr.ProfileByID(id)
 	if !ok {
 		_ = n.sendToChat(ctx, chatID, "Трейдер не найден. Пример: /history миша", traders.TradersInlineKeyboard())
 		return
 	}
-	history, _ := n.traderMgr.History(id, 20)
-	text := traders.FormatTraderDetailHTML(p, s, n.traderMgr.EquityPerTrader(), n.traderMgr.DemoAutotradeEnabled(), history)
-	_ = n.sendToChat(ctx, chatID, text, traders.TradersInlineKeyboard())
+	allHistory, _ := n.traderMgr.History(id, 0)
+	const pageSize = 10
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(allHistory) && len(allHistory) > 0 {
+		offset = ((len(allHistory) - 1) / pageSize) * pageSize
+	}
+	end := offset + pageSize
+	if end > len(allHistory) {
+		end = len(allHistory)
+	}
+	history := allHistory[offset:end]
+	text := traders.FormatTraderDetailHTML(p, s, n.traderMgr.EquityForProfile(id), n.traderMgr.DemoAutotradeEnabled(), history)
+	_ = n.sendToChat(ctx, chatID, text, traders.TraderHistoryInlineKeyboard(id, history, offset, len(allHistory)))
+}
+
+func (n *Notifier) sendPositionDetail(ctx context.Context, chatID int64, profileID, signalID string) {
+	if n.traderMgr == nil {
+		return
+	}
+	entry, ok := n.traderMgr.Position(profileID, signalID)
+	if !ok {
+		_ = n.sendToChat(ctx, chatID, "Позиция не найдена или уже не входит в историю.", traders.TradersInlineKeyboard())
+		return
+	}
+	profile, _, exists := n.traderMgr.ProfileByID(profileID)
+	if exists {
+		_ = n.sendToChat(ctx, chatID, traders.FormatTradeDetailHTML(profile, entry), traders.TradersInlineKeyboard())
+		return
+	}
+	_ = n.sendToChat(ctx, chatID, traders.FormatTradeDetailHTML(traders.Profile{ID: profileID}, entry), traders.TradersInlineKeyboard())
+}
+
+func (n *Notifier) sendTradeDetail(ctx context.Context, chatID int64, profileID, signalID string) {
+	n.sendPositionDetail(ctx, chatID, profileID, signalID)
 }
 
 func (n *Notifier) sendStats(ctx context.Context, chatID int64) {
@@ -943,15 +1059,23 @@ func (n *Notifier) sendStats(ctx context.Context, chatID int64) {
 		return
 	}
 	uptime, total, today, reconnects, eventsTotal, eventsMin, lastAge, lastSym := n.health.Stats()
-	openPaper := 0
-	if n.journal != nil {
-		openPaper = n.journal.OpenCount()
+	openTrades := 0
+	if n.traderMgr != nil {
+		for _, stats := range n.traderMgr.AllStats() {
+			openTrades += stats.Open
+		}
+	} else if n.journal != nil {
+		openTrades = n.journal.OpenCount()
+	}
+	executionMode := "PAPER"
+	if n.traderMgr != nil && n.traderMgr.DemoAutotradeEnabled() {
+		executionMode = "BYBIT DEMO (aggregate)"
 	}
 
 	text := fmt.Sprintf(
 		"📊 <b>Scanner Stats</b>\n\n"+
 			"%s\n"+
-			"Mode: LIVE\n"+
+			"Execution: %s\n"+
 			"Uptime: %s\n"+
 			"Last event: %s ago\n"+
 			"Events/min: %d (total %d)\n"+
@@ -959,12 +1083,12 @@ func (n *Notifier) sendStats(ctx context.Context, chatID int64) {
 			"Signals total: %d (today %d)\n"+
 			"WS reconnects: %d\n"+
 			"Last signal: %s\n"+
-			"Paper open: %d\n"+
+			"Virtual open: %d\n"+
 			"👥 Subscribers: %d\n"+
 			"%s",
-		n.health.WSStatus(), uptime.Truncate(time.Second), lastAge.Truncate(time.Second),
+		n.health.WSStatus(), executionMode, uptime.Truncate(time.Second), lastAge.Truncate(time.Second),
 		eventsMin, eventsTotal, n.getSymbolCount(),
-		total, today, reconnects, lastSym, openPaper, n.subscribers.Count(),
+		total, today, reconnects, lastSym, openTrades, n.subscribers.Count(),
 		n.muteStatusLine(chatID),
 	)
 	_ = n.sendToChat(ctx, chatID, text, mainMenuKeyboard())

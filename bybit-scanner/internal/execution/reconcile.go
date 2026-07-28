@@ -27,37 +27,48 @@ func (t *DemoTrader) ClosedPnL(ctx context.Context, limit int) ([]ClosedPnL, err
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	raw, err := t.client.GetSigned(ctx, "/v5/position/closed-pnl",
-		fmt.Sprintf("category=linear&limit=%d", limit))
-	if err != nil {
-		return nil, err
-	}
-	var parsed struct {
-		List []struct {
-			OrderID     string `json:"orderId"`
-			Symbol      string `json:"symbol"`
-			Side        string `json:"side"`
-			ClosedPnL   string `json:"closedPnl"`
-			UpdatedTime string `json:"updatedTime"`
-			CloseType   string `json:"closeType"`
-		} `json:"list"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, err
-	}
-	out := make([]ClosedPnL, 0, len(parsed.List))
-	for _, row := range parsed.List {
-		pnl, _ := strconv.ParseFloat(row.ClosedPnL, 64)
-		ms, _ := strconv.ParseInt(row.UpdatedTime, 10, 64)
-		side := risk.SideLong
-		if row.Side == "Sell" {
-			side = risk.SideShort
+	var out []ClosedPnL
+	cursor := ""
+	for page := 0; page < 10; page++ {
+		query := fmt.Sprintf("category=linear&limit=%d", limit)
+		if cursor != "" {
+			query += "&cursor=" + cursor
 		}
-		out = append(out, ClosedPnL{
-			OrderID: row.OrderID, Symbol: row.Symbol, Side: side,
-			ClosedPnL: pnl, UpdatedAt: time.UnixMilli(ms).UTC(),
-			CloseReason: row.CloseType,
-		})
+		raw, err := t.client.GetSigned(ctx, "/v5/position/closed-pnl", query)
+		if err != nil {
+			return nil, err
+		}
+		var parsed struct {
+			NextPageCursor string `json:"nextPageCursor"`
+			List           []struct {
+				OrderID     string `json:"orderId"`
+				Symbol      string `json:"symbol"`
+				Side        string `json:"side"`
+				ClosedPnL   string `json:"closedPnl"`
+				UpdatedTime string `json:"updatedTime"`
+				CloseType   string `json:"closeType"`
+			} `json:"list"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return nil, err
+		}
+		for _, row := range parsed.List {
+			pnl, _ := strconv.ParseFloat(row.ClosedPnL, 64)
+			ms, _ := strconv.ParseInt(row.UpdatedTime, 10, 64)
+			side := risk.SideLong
+			if row.Side == "Sell" {
+				side = risk.SideShort
+			}
+			out = append(out, ClosedPnL{
+				OrderID: row.OrderID, Symbol: row.Symbol, Side: side,
+				ClosedPnL: pnl, UpdatedAt: time.UnixMilli(ms).UTC(),
+				CloseReason: row.CloseType,
+			})
+		}
+		cursor = parsed.NextPageCursor
+		if cursor == "" {
+			break
+		}
 	}
 	return out, nil
 }

@@ -19,35 +19,57 @@ type impulseTrack struct {
 }
 
 type trackerStore struct {
-	mu      sync.Mutex
-	active  map[string]*impulseTrack
+	mu       sync.Mutex
+	active   map[string]map[string]*impulseTrack
 	cooldown map[string]time.Time
 }
 
 func newTrackerStore() *trackerStore {
 	return &trackerStore{
-		active:   make(map[string]*impulseTrack),
+		active:   make(map[string]map[string]*impulseTrack),
 		cooldown: make(map[string]time.Time),
 	}
 }
 
-func (s *trackerStore) get(symbol string) (*impulseTrack, bool) {
+func (s *trackerStore) getAll(symbol string) []*impulseTrack {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.active[symbol]
-	return t, ok
+	group := s.active[symbol]
+	out := make([]*impulseTrack, 0, len(group))
+	for _, track := range group {
+		out = append(out, track)
+	}
+	return out
+}
+
+func (s *trackerStore) hasDirection(symbol, direction string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, track := range s.active[symbol] {
+		if track.ImpulseDir == direction {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *trackerStore) start(t *impulseTrack) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.active[t.Symbol] = t
+	if s.active[t.Symbol] == nil {
+		s.active[t.Symbol] = make(map[string]*impulseTrack)
+	}
+	s.active[t.Symbol][trackKey(t)] = t
 }
 
-func (s *trackerStore) remove(symbol string) {
+func (s *trackerStore) remove(t *impulseTrack) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.active, symbol)
+	group := s.active[t.Symbol]
+	delete(group, trackKey(t))
+	if len(group) == 0 {
+		delete(s.active, t.Symbol)
+	}
 }
 
 func (s *trackerStore) onCooldown(symbol string, now time.Time) bool {
@@ -55,6 +77,10 @@ func (s *trackerStore) onCooldown(symbol string, now time.Time) bool {
 	defer s.mu.Unlock()
 	until, ok := s.cooldown[symbol]
 	return ok && now.Before(until)
+}
+
+func trackKey(t *impulseTrack) string {
+	return t.Symbol + ":" + t.ImpulseDir + ":" + t.Base.SetupType
 }
 
 func (s *trackerStore) setCooldown(symbol string, until time.Time) {

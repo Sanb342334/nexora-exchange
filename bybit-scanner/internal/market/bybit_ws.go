@@ -33,21 +33,26 @@ const (
 	EventTicker
 	EventTrade
 	EventLiquidation
+	EventOrderbook
 )
 
 type MarketEvent struct {
-	Type       EventType
-	Symbol     string
-	ReceivedAt time.Time
-	Kline      analyzer.Candle
-	Price      float64
-	Bid        float64
-	Ask        float64
-	Funding    float64
-	OpenInterest float64
-	TradeSide  string
-	TradeValue float64
-	LiqValue   float64
+	Type          EventType
+	Symbol        string
+	ReceivedAt    time.Time
+	ExchangeAt    time.Time
+	Kline         analyzer.Candle
+	Price         float64
+	Bid           float64
+	Ask           float64
+	Funding       float64
+	OpenInterest  float64
+	TradeSide     string
+	TradeValue    float64
+	LiqValue      float64
+	LiqSide       string
+	KlineInterval string
+	Book          BookUpdate
 }
 
 type WSManager struct {
@@ -65,6 +70,7 @@ type wsShard struct {
 	id      int
 	symbols []string
 	url     string
+	cfg     *config.Config
 	log     *logger.Loggers
 	health  *health.Tracker
 	events  chan<- MarketEvent
@@ -106,10 +112,19 @@ type tradePayload struct {
 }
 
 type liquidationPayload struct {
-	Symbol string `json:"symbol"`
-	Side   string `json:"side"`
-	Price  string `json:"price"`
-	Size   string `json:"size"`
+	Symbol    string `json:"s"`
+	Side      string `json:"S"`
+	Price     string `json:"p"`
+	Size      string `json:"v"`
+	Timestamp int64  `json:"T"`
+}
+
+type orderbookPayload struct {
+	Symbol   string     `json:"s"`
+	Bids     [][]string `json:"b"`
+	Asks     [][]string `json:"a"`
+	UpdateID int64      `json:"u"`
+	PrevID   int64      `json:"pu"`
 }
 
 func NewWSManager(cfg *config.Config, log *logger.Loggers, healthTracker *health.Tracker, symbols []string) *WSManager {
@@ -142,6 +157,7 @@ func (m *WSManager) Start(ctx context.Context) {
 			id:      len(m.shards),
 			symbols: append([]string(nil), m.symbols[i:end]...),
 			url:     m.cfg.BybitWSURL,
+			cfg:     m.cfg,
 			log:     m.log,
 			health:  m.health,
 			events:  m.events,
@@ -280,6 +296,24 @@ func (s *wsShard) subscribe(conn *websocket.Conn, symbols []string) error {
 			fmt.Sprintf("publicTrade.%s", sym),
 			fmt.Sprintf("allLiquidation.%s", sym),
 		)
+		if sym == analyzer.BTCSymbol {
+			args = append(args,
+				fmt.Sprintf("kline.5.%s", sym),
+				fmt.Sprintf("kline.15.%s", sym),
+				fmt.Sprintf("kline.60.%s", sym),
+			)
+		}
+	}
+	orderbook := config.OrderbookConfig{}
+	if s.cfg != nil {
+		orderbook = s.cfg.Snapshot().MarketContext.Orderbook
+	}
+	if orderbook.Enabled {
+		for _, sym := range orderbook.Symbols {
+			if containsSymbol(symbols, sym) {
+				args = append(args, fmt.Sprintf("orderbook.50.%s", sym))
+			}
+		}
 	}
 
 	for i := 0; i < len(args); i += maxSubscriptions {
@@ -299,6 +333,15 @@ func (s *wsShard) subscribe(conn *websocket.Conn, symbols []string) error {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return nil
+}
+
+func containsSymbol(symbols []string, target string) bool {
+	for _, symbol := range symbols {
+		if symbol == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *wsShard) handleMessage(raw []byte, receivedAt time.Time) error {
@@ -323,6 +366,8 @@ func (s *wsShard) handleMessage(raw []byte, receivedAt time.Time) error {
 		return s.handleTrade(env.Data, receivedAt)
 	case strings.HasPrefix(env.Topic, "allLiquidation."):
 		return s.handleLiquidation(env.Topic, env.Data, receivedAt)
+	case strings.HasPrefix(env.Topic, "orderbook.50."):
+		return s.handleOrderbook(env.Type, env.Data, receivedAt)
 	}
 	return nil
 }
@@ -349,13 +394,44 @@ func (s *wsShard) handleKline(topic string, data json.RawMessage, receivedAt tim
 	turnover, _ := strconv.ParseFloat(row.Turnover, 64)
 
 	s.events <- MarketEvent{
-		Type:       EventKline,
-		Symbol:     symbol,
-		ReceivedAt: receivedAt,
+		Type:          EventKline,
+		Symbol:        symbol,
+		ReceivedAt:    receivedAt,
+		KlineInterval: topicInterval(topic),
 		Kline: analyzer.Candle{
 			Start: time.UnixMilli(row.Start).UTC(), Open: open, High: high,
 			Low: low, Close: closeP, VolumeUSDT: turnover, Confirmed: row.Confirm,
 		},
+	}
+	return nil
+}
+
+func (s *wsShard) handleOrderbook(messageType string, data json.RawMessage, receivedAt time.Time) error {
+	var payload orderbookPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	toLevels := func(rows [][]string) []BookLevel {
+		out := make([]BookLevel, 0, len(rows))
+		for _, row := range rows {
+			if len(row) < 2 {
+				continue
+			}
+			price, errPrice := strconv.ParseFloat(row[0], 64)
+			size, errSize := strconv.ParseFloat(row[1], 64)
+			if errPrice == nil && errSize == nil {
+				out = append(out, BookLevel{Price: price, Size: size})
+			}
+		}
+		return out
+	}
+	if payload.Symbol == "" {
+		return fmt.Errorf("orderbook without symbol")
+	}
+	s.events <- MarketEvent{
+		Type: EventOrderbook, Symbol: payload.Symbol, ReceivedAt: receivedAt,
+		Book: BookUpdate{Symbol: payload.Symbol, Type: messageType, UpdateID: payload.UpdateID, PrevID: payload.PrevID,
+			Bids: toLevels(payload.Bids), Asks: toLevels(payload.Asks), ReceivedAt: receivedAt},
 	}
 	return nil
 }
@@ -410,18 +486,29 @@ func (s *wsShard) handleTrade(data json.RawMessage, receivedAt time.Time) error 
 
 func (s *wsShard) handleLiquidation(topic string, data json.RawMessage, receivedAt time.Time) error {
 	symbol := topicSymbol(topic)
-	var row liquidationPayload
-	if err := json.Unmarshal(data, &row); err != nil {
-		return err
+	var rows []liquidationPayload
+	if err := json.Unmarshal(data, &rows); err != nil {
+		var row liquidationPayload
+		if err2 := json.Unmarshal(data, &row); err2 != nil {
+			return err
+		}
+		rows = []liquidationPayload{row}
 	}
-	if row.Symbol != "" {
-		symbol = row.Symbol
-	}
-	price, _ := strconv.ParseFloat(row.Price, 64)
-	size, _ := strconv.ParseFloat(row.Size, 64)
-	s.events <- MarketEvent{
-		Type: EventLiquidation, Symbol: symbol, ReceivedAt: receivedAt,
-		LiqValue: price * size,
+	for _, row := range rows {
+		rowSymbol := symbol
+		if row.Symbol != "" {
+			rowSymbol = row.Symbol
+		}
+		price, _ := strconv.ParseFloat(row.Price, 64)
+		size, _ := strconv.ParseFloat(row.Size, 64)
+		exchangeAt := receivedAt
+		if row.Timestamp > 0 {
+			exchangeAt = time.UnixMilli(row.Timestamp).UTC()
+		}
+		s.events <- MarketEvent{
+			Type: EventLiquidation, Symbol: rowSymbol, ReceivedAt: receivedAt, ExchangeAt: exchangeAt,
+			LiqValue: price * size, LiqSide: row.Side,
+		}
 	}
 	return nil
 }
@@ -432,4 +519,12 @@ func topicSymbol(topic string) string {
 		return topic
 	}
 	return parts[len(parts)-1]
+}
+
+func topicInterval(topic string) string {
+	parts := strings.Split(topic, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[len(parts)-2]
 }

@@ -6,6 +6,7 @@ import (
 
 	"bybit-scanner/internal/analyzer"
 	"bybit-scanner/internal/config"
+	"bybit-scanner/internal/signals"
 )
 
 type Engine struct {
@@ -38,7 +39,7 @@ func (e *Engine) Process(symbol string, st *analyzer.SymbolState, now time.Time)
 	price := st.LastPrice()
 	var out []Outcome
 
-	if tr, ok := e.trackers.get(symbol); ok {
+	for _, tr := range e.trackers.getAll(symbol) {
 		tr.updatePrice(price)
 		elapsed := now.Sub(tr.StartedAt)
 
@@ -47,30 +48,28 @@ func (e *Engine) Process(symbol string, st *analyzer.SymbolState, now time.Time)
 			out = append(out, *o)
 		}
 		if done {
-			e.trackers.remove(symbol)
-			e.trackers.setCooldown(symbol, now.Add(5*time.Minute))
+			e.trackers.remove(tr)
+			e.trackers.setCooldown(trackKey(tr), now.Add(5*time.Minute))
 		}
-		return out
-	}
-
-	if e.trackers.onCooldown(symbol, now) {
-		return nil
 	}
 
 	raw, ok := e.detector.Evaluate(symbol, st, now)
 	if !ok || raw == nil {
-		return nil
+		return out
 	}
 	sig := *raw
-
+	fingerprint := symbol + ":" + sig.Movement + ":" + sig.SetupType
+	if e.trackers.onCooldown(fingerprint, now) || e.trackers.hasDirection(symbol, sig.Movement) {
+		return out
+	}
 	v := runVetoes(sig, e.cfg, false)
 	if v.Blocked {
-		return nil
+		return out
 	}
 
 	sig.Score -= v.Penalty
 	if sig.Score < e.cfg.MinScoreImpulse {
-		return nil
+		return out
 	}
 
 	// HOT — immediate confirmed trade, skip confirmation window.
@@ -78,7 +77,7 @@ func (e *Engine) Process(symbol string, st *analyzer.SymbolState, now time.Time)
 		confirmed := e.buildConfirmed(sig, st, now)
 		if confirmed != nil {
 			out = append(out, *confirmed)
-			e.trackers.setCooldown(symbol, now.Add(10*time.Minute))
+			e.trackers.setCooldown(fingerprint, now.Add(10*time.Minute))
 		}
 		return out
 	}
@@ -111,6 +110,10 @@ func (e *Engine) isHot(sig analyzer.Signal) bool {
 func (e *Engine) evaluateTrack(tr *impulseTrack, st *analyzer.SymbolState, now time.Time, elapsed time.Duration) (*Outcome, bool) {
 	minWait := time.Duration(e.cfg.ConfirmMinSec) * time.Second
 	maxWait := time.Duration(e.cfg.ConfirmMaxSec) * time.Second
+	if e.fastEligible(tr, st, now) {
+		minWait = time.Duration(e.cfg.FastConfirmMinSec) * time.Second
+		maxWait = time.Duration(e.cfg.FastConfirmMaxSec) * time.Second
+	}
 
 	if elapsed < minWait {
 		return nil, false
@@ -123,10 +126,16 @@ func (e *Engine) evaluateTrack(tr *impulseTrack, st *analyzer.SymbolState, now t
 		if o := e.resolveFollowFade(tr, st, now, price, orderflow); o != nil {
 			return o, true
 		}
-		return nil, true
+		return e.buildInvalidated(tr, price, orderflow, now), true
 	}
 
 	return nil, false
+}
+
+func (e *Engine) fastEligible(tr *impulseTrack, st *analyzer.SymbolState, now time.Time) bool {
+	return tr.Base.Score >= e.cfg.FastMinScore &&
+		len(tr.Base.Triggers) >= e.cfg.MinTriggersConfirmed &&
+		st.FreshTicker(now, time.Duration(e.cfg.DataFreshSec)*time.Second)
 }
 
 func (e *Engine) shouldResolve(tr *impulseTrack, price, orderflow float64) bool {
@@ -157,7 +166,7 @@ func (e *Engine) resolveFollowFade(tr *impulseTrack, st *analyzer.SymbolState, n
 
 	if tr.ImpulseDir == "PUMP" {
 		if e.cfg.FadeEnabled && retrace >= e.cfg.FadeRetracePct && orderflow <= 0 {
-			return e.buildFade(sig, ActionShort, "FADE_SHORT", now, []string{
+			return e.buildFade(tr, sig, ActionShort, "FADE_SHORT", now, []string{
 				fmt.Sprintf("pump failed: retrace %.1f%% from high $%.6g", retrace, tr.PeakPrice),
 				fmt.Sprintf("orderflow flipped sell ($%.0f)", orderflow),
 				fmt.Sprintf("high $%.6g → now $%.6g", tr.PeakPrice, price),
@@ -174,7 +183,7 @@ func (e *Engine) resolveFollowFade(tr *impulseTrack, st *analyzer.SymbolState, n
 
 	if tr.ImpulseDir == "DUMP" {
 		if e.cfg.FadeEnabled && retrace >= e.cfg.FadeRetracePct && orderflow >= 0 {
-			return e.buildFade(sig, ActionLong, "FADE_LONG", now, []string{
+			return e.buildFade(tr, sig, ActionLong, "FADE_LONG", now, []string{
 				fmt.Sprintf("dump failed: bounce %.1f%% from low $%.6g", retrace, tr.TroughPrice),
 				fmt.Sprintf("orderflow flipped buy ($%.0f)", orderflow),
 			})
@@ -193,7 +202,6 @@ func (e *Engine) resolveFollowFade(tr *impulseTrack, st *analyzer.SymbolState, n
 func (e *Engine) buildImpulse(sig analyzer.Signal, now time.Time) Outcome {
 	sig.AlertType = AlertImpulse
 	sig.TradeAction = movementToAction(sig.Movement)
-	sig.SignalID = fmt.Sprintf("%s-%s", now.Format("20060102150405"), sig.Symbol)
 	sig.Reasons = []string{
 		"impulse detected — ждём подтверждения 30–120 сек",
 		fmt.Sprintf("vol $%.0f (x%.1f)", sig.Volume1m, sig.VolumeRatio),
@@ -225,7 +233,10 @@ func (e *Engine) buildConfirmedFrom(tr *impulseTrack, sig analyzer.Signal, st *a
 	sig.Movement = actionToMovement(action)
 	sig.Timestamp = now
 	sig.Price = st.LastPrice()
-	sig.SignalID = fmt.Sprintf("%s-%s", now.Format("20060102150405"), sig.Symbol)
+	if tr != nil {
+		sig.ParentSignalID = tr.Base.SignalID
+		sig.SignalID = signals.NewID()
+	}
 
 	if len(sig.Triggers) < e.cfg.MinTriggersConfirmed && tr != nil {
 		return nil
@@ -244,13 +255,14 @@ func (e *Engine) buildConfirmedFrom(tr *impulseTrack, sig analyzer.Signal, st *a
 	return &Outcome{Signal: sig, Tradeable: true, CooldownKey: "confirmed"}
 }
 
-func (e *Engine) buildFade(sig analyzer.Signal, action, setup string, now time.Time, reasons []string) *Outcome {
+func (e *Engine) buildFade(tr *impulseTrack, sig analyzer.Signal, action, setup string, now time.Time, reasons []string) *Outcome {
 	sig.AlertType = AlertFade
 	sig.TradeAction = action
 	sig.SetupType = setup
 	sig.Movement = actionToMovement(action)
 	sig.Timestamp = now
-	sig.SignalID = fmt.Sprintf("%s-%s", now.Format("20060102150405"), sig.Symbol)
+	sig.ParentSignalID = tr.Base.SignalID
+	sig.SignalID = signals.NewID()
 
 	v := runVetoes(sig, e.cfg, true)
 	if v.Blocked {
@@ -263,6 +275,22 @@ func (e *Engine) buildFade(sig analyzer.Signal, action, setup string, now time.T
 	sig.Reasons = append(reasons, v.Reasons...)
 
 	return &Outcome{Signal: sig, Tradeable: true, CooldownKey: "fade"}
+}
+
+func (e *Engine) buildInvalidated(tr *impulseTrack, price, orderflow float64, now time.Time) *Outcome {
+	sig := tr.Base
+	sig.AlertType = AlertInvalidated
+	sig.TradeAction = ActionNoTrade
+	sig.Timestamp = now
+	sig.Price = price
+	sig.ParentSignalID = tr.Base.SignalID
+	sig.SignalID = signals.NewID()
+	sig.Reasons = []string{
+		"impulse invalidated — no confirmed entry",
+		fmt.Sprintf("retrace %.1f%%", tr.retrace(price)),
+		fmt.Sprintf("orderflow $%.0f", orderflow),
+	}
+	return &Outcome{Signal: sig, Tradeable: false, CooldownKey: "invalidated"}
 }
 
 func movementToAction(m string) string {

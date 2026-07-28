@@ -10,16 +10,22 @@ import (
 	"sync"
 	"time"
 
+	"bybit-scanner/internal/config"
 	"bybit-scanner/internal/logger"
 )
 
 type DemoTrader struct {
-	cfg    Config
-	client *Client
-	log    *logger.Loggers
-	mu     sync.Mutex
+	cfg         Config
+	client      *Client
+	log         *logger.Loggers
+	journal     *EventJournal
+	mu          sync.Mutex
 	symbolLocks map[string]*sync.Mutex
-	intents map[string]TestTradeResult
+	intents     map[string]TestTradeResult
+	exitMu      sync.RWMutex
+	exitPolicy  config.AdaptiveExitConfig
+	managed     map[string]ManagedDemoPosition
+	lastExitRun map[string]time.Time
 }
 
 type TestTradeResult struct {
@@ -35,15 +41,142 @@ type TestTradeResult struct {
 	Message    string
 }
 
-func NewDemoTrader(log *logger.Loggers) *DemoTrader {
+func NewDemoTrader(log *logger.Loggers, logDir string) *DemoTrader {
 	cfg := LoadConfig()
-	return &DemoTrader{
-		cfg:    cfg,
-		client: NewClient(cfg),
-		log:    log,
+	journal := NewEventJournal(logDir)
+	trader := &DemoTrader{
+		cfg:         cfg,
+		client:      NewClient(cfg),
+		log:         log,
+		journal:     journal,
 		symbolLocks: make(map[string]*sync.Mutex),
-		intents: make(map[string]TestTradeResult),
+		intents:     make(map[string]TestTradeResult),
+		managed:     make(map[string]ManagedDemoPosition),
+		lastExitRun: make(map[string]time.Time),
 	}
+	if projection, err := journal.Projection(); err == nil {
+		for intentID, event := range projection {
+			if event.State != IntentProtected || event.OrderID == "" {
+				continue
+			}
+			trader.intents[intentID] = TestTradeResult{
+				Symbol: event.Symbol, OrderID: event.OrderID, OrderLink: event.OrderLink,
+				Qty: strconv.FormatFloat(event.FilledQty, 'f', -1, 64), EntryPrice: event.FilledPrice,
+				Notional: event.FilledQty * event.FilledPrice,
+			}
+			if event.OriginalStop > 0 && event.OriginalTP > 0 && event.Side != "" {
+				trader.managed[event.Symbol] = ManagedDemoPosition{
+					IntentID: intentID, OrderID: event.OrderID, Symbol: event.Symbol, Side: event.Side,
+					EntryPrice: event.FilledPrice, OriginalStop: event.OriginalStop, OriginalTP: event.OriginalTP,
+				}
+			}
+		}
+	}
+	return trader
+}
+
+// SetAdaptiveExitPolicy is intentionally separate from the demo order toggle:
+// callers may reload exit tuning, but it never grants live-trading access.
+func (t *DemoTrader) SetAdaptiveExitPolicy(policy config.AdaptiveExitConfig) {
+	t.exitMu.Lock()
+	t.exitPolicy = policy
+	t.exitMu.Unlock()
+}
+
+func (t *DemoTrader) RegisterManagedPosition(position ManagedDemoPosition) {
+	if position.Symbol == "" || position.EntryPrice <= 0 || position.OriginalStop <= 0 || position.OriginalTP <= 0 {
+		return
+	}
+	t.exitMu.Lock()
+	if existing, ok := t.managed[position.Symbol]; ok && existing.IntentID != "" && position.IntentID == "" {
+		// The event journal records the exchange-confirmed entry price. Keep
+		// it over a reconstructed recommendation's estimated entry price.
+		t.exitMu.Unlock()
+		return
+	}
+	t.managed[position.Symbol] = position
+	t.exitMu.Unlock()
+}
+
+// HandlePrice schedules at most one bounded asynchronous REST adjustment for a
+// bot-owned Demo position. Market-data handlers never wait for exchange I/O.
+func (t *DemoTrader) HandlePrice(symbol string, price float64) {
+	if price <= 0 || !t.Enabled() || ensureDemoHost(t.cfg.BaseURL) != nil {
+		return
+	}
+	t.exitMu.Lock()
+	position, managed := t.managed[symbol]
+	policy := t.exitPolicy
+	now := time.Now()
+	if !managed || !policy.Enabled || !intervalElapsed(t.lastExitRun[symbol], now, policy.MinUpdateIntervalSec) {
+		t.exitMu.Unlock()
+		return
+	}
+	// Preflight against bot-owned initial protection avoids position REST reads
+	// before an exit threshold can possibly be reached.
+	preview := CalculateExitAdjustment(policy, position, position.OriginalStop, position.OriginalTP, price)
+	if !preview.ChangeStop && !preview.ChangeTP {
+		t.exitMu.Unlock()
+		return
+	}
+	t.lastExitRun[symbol] = now
+	t.exitMu.Unlock()
+	go t.applyAdaptiveExit(symbol, price)
+}
+
+func (t *DemoTrader) applyAdaptiveExit(symbol string, price float64) {
+	unlock := t.lockSymbol(symbol)
+	defer unlock()
+
+	t.exitMu.RLock()
+	position, managed := t.managed[symbol]
+	policy := t.exitPolicy
+	t.exitMu.RUnlock()
+	if !managed || !policy.Enabled {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pos, err := t.fetchPosition(ctx, symbol)
+	if err != nil {
+		t.log.Errors.Warn().Err(err).Str("symbol", symbol).Msg("adaptive demo exit position read failed")
+		return
+	}
+	if pos.Size <= 0 || !strings.EqualFold(pos.Side, position.Side) {
+		return
+	}
+	if pos.StopLoss <= 0 || pos.TakeProfit <= 0 {
+		t.log.Errors.Warn().Str("symbol", symbol).Msg("adaptive demo exit skipped: existing protection is incomplete")
+		return
+	}
+	adjustment := CalculateExitAdjustment(policy, position, pos.StopLoss, pos.TakeProfit, price)
+	if !adjustment.ChangeStop && !adjustment.ChangeTP {
+		return
+	}
+	nextStop, nextTP := pos.StopLoss, pos.TakeProfit
+	if adjustment.ChangeStop {
+		nextStop = adjustment.StopLoss
+	}
+	if adjustment.ChangeTP {
+		nextTP = adjustment.TakeProfit
+	}
+	if err := t.setTradingStop(ctx, symbol, nextStop, nextTP); err != nil && !isBybitNotModified(err) {
+		t.log.Errors.Warn().Err(err).Str("symbol", symbol).Float64("r", adjustment.R).Msg("adaptive demo exit update failed")
+		return
+	}
+	time.Sleep(300 * time.Millisecond)
+	verified, err := t.fetchPosition(ctx, symbol)
+	if err != nil || verified.Size <= 0 ||
+		(adjustment.ChangeStop && !closePrice(verified.StopLoss, nextStop)) ||
+		(adjustment.ChangeTP && !closePrice(verified.TakeProfit, nextTP)) {
+		if err == nil {
+			err = fmt.Errorf("protection update not visible")
+		}
+		t.log.Errors.Warn().Err(err).Str("symbol", symbol).Float64("r", adjustment.R).Msg("adaptive demo exit verification failed")
+		return
+	}
+	t.log.Scanner.Info().Str("symbol", symbol).Float64("r", adjustment.R).
+		Float64("stop_loss", nextStop).Float64("take_profit", nextTP).Msg("adaptive demo exit updated")
 }
 
 func (t *DemoTrader) lockSymbol(symbol string) func() {
@@ -73,6 +206,9 @@ func (t *DemoTrader) RunTestTrade(ctx context.Context) (TestTradeResult, error) 
 
 	if !t.cfg.Ready() {
 		return res, fmt.Errorf("demo API keys not configured (BYBIT_DEMO_API_KEY/SECRET in .env)")
+	}
+	if !t.cfg.AutoTrade {
+		return res, fmt.Errorf("AUTO_TRADE_DEMO=false")
 	}
 	if err := ensureDemoHost(t.cfg.BaseURL); err != nil {
 		return res, err
@@ -146,10 +282,12 @@ func (t *DemoTrader) RunTestTrade(ctx context.Context) (TestTradeResult, error) 
 }
 
 type positionInfo struct {
-	Size      float64
-	AvgPrice  float64
-	MarkPrice float64
-	StopLoss  float64
+	Size       float64
+	SizeText   string
+	Side       string
+	AvgPrice   float64
+	MarkPrice  float64
+	StopLoss   float64
 	TakeProfit float64
 }
 
@@ -206,6 +344,7 @@ func (t *DemoTrader) fetchPosition(ctx context.Context, symbol string) (position
 			MarkPrice  string `json:"markPrice"`
 			StopLoss   string `json:"stopLoss"`
 			TakeProfit string `json:"takeProfit"`
+			Side       string `json:"side"`
 		} `json:"list"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -217,6 +356,8 @@ func (t *DemoTrader) fetchPosition(ctx context.Context, symbol string) (position
 			continue
 		}
 		out.Size = size
+		out.SizeText = p.Size
+		out.Side = p.Side
 		out.AvgPrice, _ = strconv.ParseFloat(p.AvgPrice, 64)
 		out.MarkPrice, _ = strconv.ParseFloat(p.MarkPrice, 64)
 		out.StopLoss, _ = strconv.ParseFloat(p.StopLoss, 64)
@@ -368,7 +509,8 @@ func FormatTestTradeHTML(r TestTradeResult, balance float64, enabled bool) strin
 		b.WriteString("⚠️ <code>AUTO_TRADE_DEMO=false</code> — включи в .env\n\n")
 	}
 	if r.Message != "" {
-		fmt.Fprintf(&b, "✅ %s\n\n", r.Message)
+		fmt.Fprintf(&b, "📨 <b>Demo order accepted:</b> %s\n", r.Message)
+		b.WriteString("<i>Принятие заявки не подтверждает fill. Позиция и realised PnL сверяются с Bybit отдельно.</i>\n\n")
 	}
 	fmt.Fprintf(&b, "Symbol: <code>%s</code>\n", r.Symbol)
 	fmt.Fprintf(&b, "Side: <b>%s</b> (Market)\n", r.Side)

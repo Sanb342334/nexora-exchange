@@ -239,7 +239,8 @@ func FormatTelegramHTML(rec TradeRecommendation) string {
 	fmt.Fprintf(&b, "📏 <b>Spread:</b> %.3f%% | ATR: %.2f%%\n\n", sig.SpreadPct, sig.ATRPct)
 
 	if rec.Approved() {
-		fmt.Fprintf(&b, "━━━━━━━━ <b>RISK PLAN</b> ━━━━━━━━\n")
+		fmt.Fprintf(&b, "━━━━━━━━ <b>CONFIRMED RISK PLAN</b> ━━━━━━━━\n")
+		fmt.Fprintf(&b, "<i>Это план риска, а не подтверждение заявки или fill.</i>\n")
 		fmt.Fprintf(&b, "↕️ <b>Side:</b> %s\n", rec.Side)
 		fmt.Fprintf(&b, "🎯 <b>Entry:</b> $%.6g\n", rec.Entry)
 		fmt.Fprintf(&b, "🛑 <b>SL:</b> $%.6g <i>[%s]</i> (%.2f%%)\n", rec.StopLoss, rec.SLMethod, rec.SLDistancePct)

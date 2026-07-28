@@ -3,6 +3,18 @@ package traders
 import (
 	"bybit-scanner/internal/analyzer"
 	"bybit-scanner/internal/config"
+	"strings"
+)
+
+type ExecutionMode string
+
+const (
+	// ExecutionDemoAggregate permits this profile to contribute to the single
+	// bot-owned Bybit Demo order for its symbol and side.
+	ExecutionDemoAggregate ExecutionMode = "demo_aggregate"
+	// ExecutionPaper keeps a profile entirely virtual. It has its own
+	// journal/stats lifecycle and never contributes quantity to Bybit.
+	ExecutionPaper ExecutionMode = "paper"
 )
 
 type Profile struct {
@@ -23,17 +35,62 @@ type Profile struct {
 	MinSLLiqBuffer   float64 // lower = allows higher leverage trades
 	TelegramNotify   bool
 	// Strategy filters (4th trader / unique tactics)
-	MomentumOnly bool // only CONFIRMED + HOT (follow impulse)
-	FadeOnly     bool // only FADE setups
-	MaxScore     int  // 0 = no cap (fade mid-range)
-	Strategy     string
-	MinTapePoints int
+	MomentumOnly    bool // only CONFIRMED + HOT (follow impulse)
+	FadeOnly        bool // only FADE setups
+	MaxScore        int  // 0 = no cap (fade mid-range)
+	Strategy        string
+	MinTapePoints   int
 	MaxNotionalUSDT float64
+	ExecutionMode   ExecutionMode
+	// InvertSignals trades opposite to the detector direction (contrarian).
+	InvertSignals bool
+	// AdaptiveLearn adjusts min tape/score thresholds from recent closes.
+	AdaptiveLearn bool
+	// MaxTradesPerDay caps new opens per UTC day (0 = unlimited).
+	MaxTradesPerDay int
+	// MaxSpreadPct overrides tape spread veto when > 0.
+	MaxSpreadPct float64
+	// EquityUSDT overrides global equity_per_trader_usdt when > 0.
+	EquityUSDT float64
 }
 
 func (p Profile) Accepts(sig analyzer.Signal) (bool, string) {
+	// This guard intentionally precedes strategy-specific acceptance. A future
+	// momentum-only strategy must not accidentally inherit legacy FADE inputs.
+	if p.MomentumOnly && sig.AlertType == "FADE" {
+		return false, "momentum_fade_disabled"
+	}
 	if p.Strategy == "tape_sync" {
 		return acceptsTapeSync(p, sig)
+	}
+	if p.Strategy == "carry_arbitrage" {
+		if sig.SetupType != "CARRY_ARBITRAGE" || sig.AlertType != "CARRY" {
+			return false, "carry_only"
+		}
+		if sig.Score < p.MinScore {
+			return false, "score_low"
+		}
+		return true, ""
+	}
+	if p.Strategy == "indicator_mtf" {
+		if sig.SetupType != "MTF_INDICATOR_5" || sig.AlertType != "INDICATOR_MTF" {
+			return false, "indicator_mtf_only"
+		}
+		if sig.Score < p.MinScore {
+			return false, "score_low"
+		}
+		if sig.Volume1m < p.MinVol1mUSDT {
+			return false, "vol_low"
+		}
+		return true, ""
+	}
+	if p.Strategy == "momentum_scalper_tier_a" {
+		if sig.SetupType != "MOMENTUM_SCALPER_TIER_A" || sig.AlertType != "MOMENTUM_TIER_A" {
+			return false, "momentum_tier_a_only"
+		}
+	} else if sig.SetupType == "MOMENTUM_SCALPER_TIER_A" {
+		// Legacy profiles must never consume strict momentum signals.
+		return false, "strategy_mismatch"
 	}
 	if sig.AlertType == "IMPULSE" {
 		return false, "impulse_watch_only"
@@ -70,44 +127,62 @@ func DefaultProfiles(base config.RiskConfig) []Profile {
 	return []Profile{
 		{
 			ID: "sniper", Name: "Саша", Emoji: "🎯",
-			Description:    "Снайпер — только топ-сетапы HOT, мало сделок, высокий WR",
-			MinScore:       85, MinVol1mUSDT: 100_000, MinTriggers: 3,
+			Description: "Снайпер — только топ-сетапы HOT, мало сделок, высокий WR",
+			MinScore:    85, MinVol1mUSDT: 100_000, MinTriggers: 3,
 			AllowFade: false, AllowHotOnly: true,
 			LeverageMax: 5, RiskMult: 0.4, MaxOpen: 2, MinRR: 2.2,
 			MinSLLiqBuffer: 0.8, TelegramNotify: true,
 		},
 		{
 			ID: "strategist", Name: "Дима", Emoji: "⚖️",
-			Description:    "Стратег — золотая середина, стабильный ROI",
-			MinScore:       75, MinVol1mUSDT: 50_000, MinTriggers: 2,
+			Description: "Стратег — золотая середина, стабильный ROI",
+			MinScore:    75, MinVol1mUSDT: 50_000, MinTriggers: 2,
 			AllowFade: false, AllowHotOnly: false,
 			LeverageMax: 10, RiskMult: 1.0, MaxOpen: 4, MinRR: 1.8,
 			MinSLLiqBuffer: 0.5, TelegramNotify: true,
 		},
 		{
 			ID: "agressor", Name: "Ваня", Emoji: "🔥",
-			Description:    "Агрессор — fade + низкий порог, плечо до 50x",
-			MinScore:       55, MinVol1mUSDT: 20_000, MinTriggers: 2,
+			Description: "Агрессор — fade + низкий порог, плечо до 50x",
+			MinScore:    55, MinVol1mUSDT: 20_000, MinTriggers: 2,
 			AllowFade: true, AllowHotOnly: false,
 			LeverageMax: 50, RiskMult: 1.6, MaxOpen: 10, MinRR: 1.2,
 			MinSLLiqBuffer: 0.08, TelegramNotify: true,
 		},
 		{
 			ID: "kolya", Name: "Коля", Emoji: "⚡",
-			Description:    "Пульс+ — momentum CONFIRM/HOT на объёме, цель 10+ сделок/день",
-			MinScore:       48, MinVol1mUSDT: 12_000, MinTriggers: 1,
+			Description: "Пульс+ — momentum CONFIRM/HOT на объёме, цель 10+ сделок/день",
+			MinScore:    48, MinVol1mUSDT: 12_000, MinTriggers: 1,
 			AllowFade: false, AllowHotOnly: false, MomentumOnly: true,
 			LeverageMax: 15, RiskMult: 0.7, MaxOpen: 15, MinRR: 1.1,
 			MinSLLiqBuffer: 0.10, TelegramNotify: true,
 		},
 		{
-			ID: "misha", Name: "Миша", Emoji: "🔬",
-			Description:    "Рентген ленты — рискованный скальпер, tape 2+, FADE/momentum, 30–50 сделок/день",
-			Strategy:       "tape_sync",
-			MinScore:       32, MaxScore: 65, MinVol1mUSDT: 6_000, MinTriggers: 0,
-			MinTapePoints: 2, AllowFade: true,
-			LeverageMax: 15, RiskMult: 0.75, MaxOpen: 30, MinRR: 1.0, MinSLDistancePct: 0.05,
-			MinSLLiqBuffer: 0.05, MaxNotionalUSDT: 350, TelegramNotify: true,
+			ID: "misha", Name: "Миша", Emoji: "📼",
+			Description: "Tape/FADE sync, adaptive learn, до 100 сделок/день",
+			Strategy:    "tape_sync",
+			MinScore:    32, MaxScore: 70, MinVol1mUSDT: 5_000, MinTriggers: 0,
+			MinTapePoints: 2, AllowFade: true, AdaptiveLearn: true,
+			MaxTradesPerDay: 100, MaxSpreadPct: 0.35,
+			LeverageMax: 10, RiskMult: 0.5, MaxOpen: 40, MinRR: 0.85, MinSLDistancePct: 0.04,
+			MinSLLiqBuffer: 0.05, MaxNotionalUSDT: 200, TelegramNotify: true,
+			ExecutionMode: ExecutionDemoAggregate,
+		},
+		{
+			ID: "katya", Name: "Катя", Emoji: "⚖️",
+			Description: "Spot↔Linear арбитраж и хедж, депозит $1000",
+			Strategy: "carry_arbitrage", ExecutionMode: ExecutionPaper,
+			MinScore: 25, MinVol1mUSDT: 0, MinTriggers: 0,
+			LeverageMax: 2, RiskMult: 0.35, MaxOpen: 5, MinRR: 0.5,
+			MaxNotionalUSDT: 900, EquityUSDT: 1000, TelegramNotify: true,
+		},
+		{
+			ID: "oleg", Name: "Олег", Emoji: "📊",
+			Description: "5 индикаторов · MTF 5m/15m · объёмные входы",
+			Strategy: "indicator_mtf", ExecutionMode: ExecutionPaper,
+			MinScore: 60, MinVol1mUSDT: 20_000, MinTriggers: 0,
+			LeverageMax: 12, RiskMult: 0.8, MaxOpen: 8, MinRR: 1.2,
+			TelegramNotify: true,
 		},
 	}
 }
@@ -126,6 +201,10 @@ func MergeProfiles(yamlCfg config.TradersConfig, base config.RiskConfig) []Profi
 			MinRR: yp.MinRR, MinSLDistancePct: yp.MinSLDistancePct, MinSLLiqBuffer: yp.MinSLLiqBuffer, TelegramNotify: yp.TelegramNotify,
 			MomentumOnly: yp.MomentumOnly, FadeOnly: yp.FadeOnly, MaxScore: yp.MaxScore,
 			Strategy: yp.Strategy, MinTapePoints: yp.MinTapePoints, MaxNotionalUSDT: yp.MaxNotionalUSDT,
+			ExecutionMode: ExecutionMode(strings.ToLower(strings.TrimSpace(yp.ExecutionMode))),
+			InvertSignals: yp.InvertSignals, AdaptiveLearn: yp.AdaptiveLearn,
+			MaxTradesPerDay: yp.MaxTradesPerDay, MaxSpreadPct: yp.MaxSpreadPct,
+			EquityUSDT: yp.EquityUSDT,
 		}
 		if p.ID == "" {
 			continue
@@ -137,6 +216,17 @@ func MergeProfiles(yamlCfg config.TradersConfig, base config.RiskConfig) []Profi
 }
 
 func applyProfileDefaults(p *Profile) {
+	if p.ExecutionMode == "" {
+		p.ExecutionMode = ExecutionDemoAggregate
+	}
+	switch p.ExecutionMode {
+	case "demo", "demo_aggregate":
+		p.ExecutionMode = ExecutionDemoAggregate
+	case ExecutionPaper:
+	default:
+		// An unknown mode must never gain exchange execution rights.
+		p.ExecutionMode = ExecutionPaper
+	}
 	if p.MinScore == 0 {
 		p.MinScore = 70
 	}

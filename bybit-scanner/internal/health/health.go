@@ -8,18 +8,26 @@ import (
 )
 
 type Tracker struct {
-	lastEventUnix  atomic.Int64
-	eventsTotal    atomic.Uint64
-	eventsMinute   atomic.Uint64
-	startedAt      time.Time
-	signalsTotal   atomic.Uint64
-	signalsToday   atomic.Uint64
-	wsReconnects   atomic.Uint64
-	lastSignal     atomic.Value
-	dayStart       time.Time
-	mu             sync.Mutex
-	topScores      []scoreEntry
-	minuteWindow   time.Time
+	lastEventUnix atomic.Int64
+	eventsTotal   atomic.Uint64
+	eventsMinute  atomic.Uint64
+	startedAt     time.Time
+	instance      Instance
+	signalsTotal  atomic.Uint64
+	signalsToday  atomic.Uint64
+	wsReconnects  atomic.Uint64
+	lastSignal    atomic.Value
+	dayStart      time.Time
+	mu            sync.Mutex
+	topScores     []scoreEntry
+	minuteWindow  time.Time
+}
+
+// Instance describes the scanner process that owns the local singleton lock.
+type Instance struct {
+	ID             string
+	StartedAt      time.Time
+	LocalInstances int
 }
 
 type scoreEntry struct {
@@ -33,10 +41,31 @@ func New() *Tracker {
 	now := time.Now().UTC()
 	return &Tracker{
 		startedAt:    now,
+		instance:     Instance{StartedAt: now},
 		dayStart:     now.Truncate(24 * time.Hour),
 		minuteWindow: now,
 		topScores:    make([]scoreEntry, 0, 10),
 	}
+}
+
+// SetInstance records the durable scanner identity acquired at process startup.
+func (t *Tracker) SetInstance(id string, startedAt time.Time, localInstances int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !startedAt.IsZero() {
+		t.startedAt = startedAt.UTC()
+	}
+	t.instance = Instance{
+		ID:             id,
+		StartedAt:      t.startedAt,
+		LocalInstances: localInstances,
+	}
+}
+
+func (t *Tracker) Instance() Instance {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.instance
 }
 
 func (t *Tracker) StartMinuteReset(ctx context.Context) {
@@ -73,7 +102,7 @@ func (t *Tracker) RecordSignal(symbol string, score int, movement string) {
 	defer t.mu.Unlock()
 
 	now := time.Now().UTC()
-	if now.Truncate(24*time.Hour).After(t.dayStart) {
+	if now.Truncate(24 * time.Hour).After(t.dayStart) {
 		t.dayStart = now.Truncate(24 * time.Hour)
 		t.signalsToday.Store(0)
 	}
@@ -95,7 +124,7 @@ func (t *Tracker) LastEventAge() time.Duration {
 	return time.Since(time.Unix(ts, 0))
 }
 
-func (t *Tracker) EventsTotal() uint64    { return t.eventsTotal.Load() }
+func (t *Tracker) EventsTotal() uint64     { return t.eventsTotal.Load() }
 func (t *Tracker) EventsPerMinute() uint64 { return t.eventsMinute.Load() }
 
 func (t *Tracker) Stats() (uptime time.Duration, signalsTotal, signalsToday, reconnects, eventsTotal, eventsMin uint64, lastEventAge time.Duration, lastSymbol string) {

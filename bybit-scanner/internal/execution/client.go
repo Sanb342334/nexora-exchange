@@ -18,8 +18,8 @@ type apiResponse struct {
 }
 
 type Client struct {
-	cfg    Config
-	http   *http.Client
+	cfg  Config
+	http *http.Client
 }
 
 func NewClient(cfg Config) *Client {

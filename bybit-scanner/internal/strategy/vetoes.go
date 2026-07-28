@@ -31,6 +31,11 @@ func runVetoes(sig analyzer.Signal, cfg config.StrategyConfig, forTrade bool) ve
 		return res
 	}
 
+	if math.Abs(sig.PriceChange1m) < cfg.MinPriceChangePct {
+		res.Blocked = true
+		res.Reasons = append(res.Reasons, fmt.Sprintf("price change %.3f%% < min %.3f%%", math.Abs(sig.PriceChange1m), cfg.MinPriceChangePct))
+	}
+
 	if cfg.RequireOrderflowAlign {
 		if sig.TradeAction == ActionLong && sig.TradeDelta1m < 0 {
 			res.Blocked = true
@@ -50,11 +55,6 @@ func runVetoes(sig analyzer.Signal, cfg config.StrategyConfig, forTrade bool) ve
 	if sig.AlertType != AlertFade && sig.Movement == "DUMP" && sig.TradeDelta1m > 0 {
 		res.Penalty += 15
 		res.Reasons = append(res.Reasons, "contradiction: DUMP + buy flow")
-	}
-
-	if math.Abs(sig.PriceChange1m) < 0.15 && sig.AlertType == AlertConfirmed {
-		res.Penalty += 10
-		res.Reasons = append(res.Reasons, "price flat on confirm")
 	}
 
 	return res

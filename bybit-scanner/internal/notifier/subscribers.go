@@ -4,24 +4,28 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 type subscriber struct {
-	ChatID    int64     `json:"chat_id"`
-	Username  string    `json:"username,omitempty"`
-	FirstName string    `json:"first_name,omitempty"`
-	JoinedAt  time.Time `json:"joined_at"`
-	MuteUntil *time.Time `json:"mute_until,omitempty"`
-	MinScoreOverride int `json:"min_score_override,omitempty"`
-	SignalLogs bool `json:"signal_logs,omitempty"`
+	ChatID           int64           `json:"chat_id"`
+	Username         string          `json:"username,omitempty"`
+	FirstName        string          `json:"first_name,omitempty"`
+	JoinedAt         time.Time       `json:"joined_at"`
+	MuteUntil        *time.Time      `json:"mute_until,omitempty"`
+	MinScoreOverride int             `json:"min_score_override,omitempty"`
+	SignalLogs       bool            `json:"signal_logs,omitempty"`
+	FavoriteSymbols  map[string]bool `json:"favorite_symbols,omitempty"`
+	IgnoredSymbols   map[string]bool `json:"ignored_symbols,omitempty"`
 }
 
 type SubscriberStore struct {
-	mu       sync.RWMutex
-	path     string
-	chatIDs  map[int64]subscriber
+	mu      sync.RWMutex
+	path    string
+	chatIDs map[int64]subscriber
 }
 
 func NewSubscriberStore(logDir string) *SubscriberStore {
@@ -185,6 +189,94 @@ func (s *SubscriberStore) WantsSignalLogs(chatID int64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.chatIDs[chatID].SignalLogs
+}
+
+func normalizeSymbol(symbol string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+// ToggleFavorite persists a per-chat symbol preference. It is intentionally
+// independent from alert delivery: favorites are a terminal convenience, not
+// a trading or risk control.
+func (s *SubscriberStore) ToggleFavorite(chatID int64, symbol string) (bool, error) {
+	symbol = normalizeSymbol(symbol)
+	if symbol == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		s.mu.Unlock()
+		return false, nil
+	}
+	if sub.FavoriteSymbols == nil {
+		sub.FavoriteSymbols = make(map[string]bool)
+	}
+	if sub.FavoriteSymbols[symbol] {
+		delete(sub.FavoriteSymbols, symbol)
+	} else {
+		sub.FavoriteSymbols[symbol] = true
+	}
+	favorite := sub.FavoriteSymbols[symbol]
+	s.chatIDs[chatID] = sub
+	s.mu.Unlock()
+	return favorite, s.save()
+}
+
+// ToggleIgnoredSymbol persists a narrow, per-chat mute for one symbol.
+// Commands and callbacks are deliberately not subject to this setting.
+func (s *SubscriberStore) ToggleIgnoredSymbol(chatID int64, symbol string) (bool, error) {
+	symbol = normalizeSymbol(symbol)
+	if symbol == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		s.mu.Unlock()
+		return false, nil
+	}
+	if sub.IgnoredSymbols == nil {
+		sub.IgnoredSymbols = make(map[string]bool)
+	}
+	if sub.IgnoredSymbols[symbol] {
+		delete(sub.IgnoredSymbols, symbol)
+	} else {
+		sub.IgnoredSymbols[symbol] = true
+	}
+	ignored := sub.IgnoredSymbols[symbol]
+	s.chatIDs[chatID] = sub
+	s.mu.Unlock()
+	return ignored, s.save()
+}
+
+func (s *SubscriberStore) IgnoresSymbol(chatID int64, symbol string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.chatIDs[chatID].IgnoredSymbols[normalizeSymbol(symbol)]
+}
+
+// Symbols returns a stable, read-only view of per-chat terminal preferences.
+func (s *SubscriberStore) Symbols(chatID int64) (favorites, ignored []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.chatIDs[chatID]
+	if !ok {
+		return nil, nil
+	}
+	for symbol, enabled := range sub.FavoriteSymbols {
+		if enabled {
+			favorites = append(favorites, symbol)
+		}
+	}
+	for symbol, enabled := range sub.IgnoredSymbols {
+		if enabled {
+			ignored = append(ignored, symbol)
+		}
+	}
+	sort.Strings(favorites)
+	sort.Strings(ignored)
+	return favorites, ignored
 }
 
 func (s *SubscriberStore) IsMuted(chatID int64) bool {

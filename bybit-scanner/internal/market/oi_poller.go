@@ -11,14 +11,14 @@ import (
 )
 
 type OIPoller struct {
-	rest     *RESTClient
-	store    *analyzer.Store
-	cfg      *config.Config
-	log      *logger.Loggers
-	symbols  []string
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	sem      chan struct{}
+	rest    *RESTClient
+	store   *analyzer.Store
+	cfg     *config.Config
+	log     *logger.Loggers
+	symbols []string
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	sem     chan struct{}
 }
 
 func NewOIPoller(rest *RESTClient, store *analyzer.Store, cfg *config.Config, log *logger.Loggers, symbols []string) *OIPoller {

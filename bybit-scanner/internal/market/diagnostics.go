@@ -23,6 +23,9 @@ type CheckReport struct {
 	Reconnects     uint64
 	SignalsTotal   uint64
 	Version        string
+	InstanceID     string
+	StartedAt      time.Time
+	LocalInstances int
 }
 
 func RunCheck(
@@ -39,6 +42,10 @@ func RunCheck(
 	if h != nil {
 		r.Uptime, r.SignalsTotal, _, r.Reconnects, r.EventsTotal, r.EventsPerMin, _, _ = h.Stats()
 		r.WSStatus = h.WSStatus()
+		instance := h.Instance()
+		r.InstanceID = instance.ID
+		r.StartedAt = instance.StartedAt
+		r.LocalInstances = instance.LocalInstances
 	}
 
 	price, err := rest.FetchLastPrice(ctx, "BTCUSDT")
@@ -58,6 +65,13 @@ func (r CheckReport) TelegramHTML() string {
 	b.WriteString("🔍 <b>Диагностика сканера</b>\n\n")
 
 	b.WriteString(fmt.Sprintf("📦 Версия: <code>%s</code>\n", r.Version))
+	if r.InstanceID != "" {
+		b.WriteString(fmt.Sprintf("🆔 Экземпляр: <code>%s</code>\n", r.InstanceID))
+	}
+	if !r.StartedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("🚀 Старт: %s\n", r.StartedAt.UTC().Format("2006-01-02 15:04:05 MST")))
+	}
+	b.WriteString(fmt.Sprintf("🖥 Локальных экземпляров: <b>%d</b>\n", r.LocalInstances))
 	b.WriteString(fmt.Sprintf("⏱ Uptime: %s\n", r.Uptime.Truncate(time.Second)))
 	b.WriteString(fmt.Sprintf("🪙 Монет в списке: <b>%d</b>\n\n", r.SymbolCount))
 

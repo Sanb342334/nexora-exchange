@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"bybit-scanner/internal/config"
+	"bybit-scanner/internal/signals"
 )
 
 const (
@@ -38,43 +39,44 @@ type TradeBucket struct {
 type TriggerType string
 
 const (
-	TriggerVolumeSpike  TriggerType = "VOL_SPIKE"
-	TriggerOIJump       TriggerType = "OI_JUMP"
-	TriggerPriceVol     TriggerType = "PRICE_VOL"
-	TriggerOrderflow    TriggerType = "ORDERFLOW"
-	TriggerLiquidation  TriggerType = "LIQUIDATION"
-	TriggerFundingExt   TriggerType = "FUNDING_EXT"
+	TriggerVolumeSpike TriggerType = "VOL_SPIKE"
+	TriggerOIJump      TriggerType = "OI_JUMP"
+	TriggerPriceVol    TriggerType = "PRICE_VOL"
+	TriggerOrderflow   TriggerType = "ORDERFLOW"
+	TriggerLiquidation TriggerType = "LIQUIDATION"
+	TriggerFundingExt  TriggerType = "FUNDING_EXT"
 )
 
 type Signal struct {
-	Symbol          string
-	Score           int
-	Movement        string
-	SetupType       string
-	Triggers        []TriggerType
-	LatencyMs       float64
-	Price           float64
-	PriceChange1m   float64
-	Volume1m        float64
-	VolumeRatio     float64
-	OIChange3m      float64
-	FundingRate     float64
-	LongShortRatio  float64
-	TradeDelta1m    float64
-	Liquidation1m   float64
-	BTCDecoupled    bool
-	BTCChange5m     float64
-	SpreadPct       float64
-	ATRPct          float64
-	SuggestedSL     float64
-	SuggestedTP     float64
-	Timestamp       time.Time
+	Symbol         string
+	Score          int
+	Movement       string
+	SetupType      string
+	Triggers       []TriggerType
+	LatencyMs      float64
+	Price          float64
+	PriceChange1m  float64
+	Volume1m       float64
+	VolumeRatio    float64
+	OIChange3m     float64
+	FundingRate    float64
+	LongShortRatio float64
+	TradeDelta1m   float64
+	Liquidation1m  float64
+	BTCDecoupled   bool
+	BTCChange5m    float64
+	SpreadPct      float64
+	ATRPct         float64
+	SuggestedSL    float64
+	SuggestedTP    float64
+	Timestamp      time.Time
 
 	// Pro strategy layer — explicit trade directive for risk/telegram.
-	AlertType   string   // IMPULSE, CONFIRMED, FADE, HOT
-	TradeAction string   // LONG, SHORT
-	Reasons     []string
-	SignalID    string
+	AlertType      string // IMPULSE, CONFIRMED, FADE, HOT
+	TradeAction    string // LONG, SHORT
+	Reasons        []string
+	SignalID       string
+	ParentSignalID string
 }
 
 type SymbolState struct {
@@ -84,20 +86,24 @@ type SymbolState struct {
 	candleHead  int
 	candleCount int
 	current     Candle
+	lastKlineAt time.Time
 
 	oiSamples []OISample
 
-	lastPrice     float64
-	bidPrice      float64
-	askPrice      float64
-	fundingRate   float64
+	lastPrice      float64
+	bidPrice       float64
+	askPrice       float64
+	fundingRate    float64
 	longShortRatio float64
+	lastTickerAt   time.Time
+	lastOIAt       time.Time
 
-	tradeBucket   TradeBucket
-	liquidation1m float64
+	tradeBucket    TradeBucket
+	lastTradeAt    time.Time
+	liquidation1m  float64
 	liqWindowStart time.Time
 
-	lastAlert     time.Time
+	lastAlert      time.Time
 	alertByTrigger map[TriggerType]time.Time
 }
 
@@ -204,8 +210,15 @@ func (t *BTCTracker) Change5m() float64 {
 }
 
 func (st *SymbolState) UpdateKline(c Candle) {
+	st.UpdateKlineAt(c, time.Now().UTC())
+}
+
+// UpdateKlineAt records the receipt timestamp separately from the candle
+// boundary, allowing quality freshness checks to reject delayed feed updates.
+func (st *SymbolState) UpdateKlineAt(c Candle, receivedAt time.Time) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	st.lastKlineAt = receivedAt
 
 	if c.Confirmed {
 		st.candles[st.candleHead] = c
@@ -235,8 +248,10 @@ func (st *SymbolState) UpdateTicker(price, bid, ask, funding, oi float64, ts tim
 		st.askPrice = ask
 	}
 	st.fundingRate = funding
+	st.lastTickerAt = ts
 	if oi > 0 {
 		st.oiSamples = append(st.oiSamples, OISample{Timestamp: ts, Value: oi})
+		st.lastOIAt = ts
 		cutoff := ts.Add(-5 * time.Minute)
 		i := 0
 		for i < len(st.oiSamples) && st.oiSamples[i].Timestamp.Before(cutoff) {
@@ -258,6 +273,7 @@ func (st *SymbolState) UpdateOI(value float64, ts time.Time) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.oiSamples = append(st.oiSamples, OISample{Timestamp: ts, Value: value})
+	st.lastOIAt = ts
 	cutoff := ts.Add(-5 * time.Minute)
 	i := 0
 	for i < len(st.oiSamples) && st.oiSamples[i].Timestamp.Before(cutoff) {
@@ -271,6 +287,7 @@ func (st *SymbolState) UpdateOI(value float64, ts time.Time) {
 func (st *SymbolState) UpdateTrade(side string, valueUSDT float64, ts time.Time) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	st.lastTradeAt = ts
 
 	if st.tradeBucket.Start.IsZero() || ts.Sub(st.tradeBucket.Start) >= time.Minute {
 		st.tradeBucket = TradeBucket{Start: ts.Truncate(time.Minute)}
@@ -291,6 +308,16 @@ func (st *SymbolState) UpdateLiquidation(valueUSDT float64, ts time.Time) {
 		st.liqWindowStart = ts.Truncate(time.Minute)
 	}
 	st.liquidation1m += valueUSDT
+}
+
+// FreshTicker reports whether executable bid/ask data is recent enough for a
+// fast-entry decision. It deliberately does not treat a delayed REST value as
+// fresh market data.
+func (st *SymbolState) FreshTicker(now time.Time, maxAge time.Duration) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return !st.lastTickerAt.IsZero() && now.Sub(st.lastTickerAt) <= maxAge &&
+		st.bidPrice > 0 && st.askPrice > 0
 }
 
 func (st *SymbolState) CanAlert(cooldown time.Duration, triggers []TriggerType, now time.Time) bool {
@@ -439,6 +466,59 @@ func (st *SymbolState) RecentCandles(n int) []Candle {
 	return out
 }
 
+// QualitySnapshot is an immutable, point-in-time feature view for audit and
+// research. It deliberately exposes freshness separately from values: callers
+// must not turn a missing feed into a neutral or favourable factor.
+type QualitySnapshot struct {
+	Symbol               string
+	ObservedAt           time.Time
+	Price                float64
+	Bid                  float64
+	Ask                  float64
+	SpreadPct            float64
+	FundingRate          float64
+	LongShortRatio       float64
+	OIChange3m           float64
+	TradeBuyUSDT         float64
+	TradeSellUSDT        float64
+	TradeDeltaUSDT       float64
+	Liquidation1mUSDT    float64
+	Candle               Candle
+	NormalizedVolumeUSDT float64
+	TickerAt             time.Time
+	OIAt                 time.Time
+	TradeAt              time.Time
+	KlineAt              time.Time
+}
+
+// SnapshotQuality captures live fields once under the state lock. The
+// in-progress candle turnover is normalized to a full minute so assessments
+// made early in the candle are comparable without treating it as a close.
+func (st *SymbolState) SnapshotQuality(symbol string, now time.Time) QualitySnapshot {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	candle := st.activeCandle()
+	price := st.lastPrice
+	if price <= 0 {
+		price = candle.Close
+	}
+	normalizedVolume := candle.VolumeUSDT
+	if !candle.Confirmed && !candle.Start.IsZero() {
+		elapsed := now.Sub(candle.Start)
+		if elapsed > 0 && elapsed < time.Minute {
+			normalizedVolume *= time.Minute.Seconds() / elapsed.Seconds()
+		}
+	}
+	return QualitySnapshot{
+		Symbol: symbol, ObservedAt: now, Price: price, Bid: st.bidPrice, Ask: st.askPrice,
+		SpreadPct: st.spreadPct(), FundingRate: st.fundingRate, LongShortRatio: st.longShortRatio,
+		OIChange3m: st.oiChange3m(now), TradeBuyUSDT: st.tradeBucket.BuyUSDT,
+		TradeSellUSDT: st.tradeBucket.SellUSDT, TradeDeltaUSDT: st.tradeDelta(),
+		Liquidation1mUSDT: st.liquidation1m, Candle: candle, NormalizedVolumeUSDT: normalizedVolume,
+		TickerAt: st.lastTickerAt, OIAt: st.lastOIAt, TradeAt: st.lastTradeAt, KlineAt: st.lastKlineAt,
+	}
+}
+
 type Detector struct {
 	cfg *config.Config
 	btc *BTCTracker
@@ -570,28 +650,29 @@ func (d *Detector) Evaluate(symbol string, st *SymbolState, receivedAt time.Time
 	latencyMs := float64(time.Since(receivedAt).Microseconds()) / 1000.0
 
 	return &Signal{
-		Symbol:          symbol,
-		Score:           score,
-		Movement:        movement,
-		SetupType:       setupType,
-		Triggers:        triggers,
-		LatencyMs:       latencyMs,
-		Price:           price,
-		PriceChange1m:   priceChange1m,
-		Volume1m:        vol1m,
-		VolumeRatio:     volRatio,
-		OIChange3m:      oiChange,
-		FundingRate:     fundingPct,
-		LongShortRatio:  st.longShortRatio,
-		TradeDelta1m:    tradeDelta,
-		Liquidation1m:   liq1m,
-		BTCDecoupled:    btcDecoupled,
-		BTCChange5m:     btcChange,
-		SpreadPct:       spread,
-		ATRPct:          atrPct,
-		SuggestedSL:     suggestedSL,
-		SuggestedTP:     suggestedTP,
-		Timestamp:       receivedAt,
+		Symbol:         symbol,
+		Score:          score,
+		Movement:       movement,
+		SetupType:      setupType,
+		Triggers:       triggers,
+		LatencyMs:      latencyMs,
+		Price:          price,
+		PriceChange1m:  priceChange1m,
+		Volume1m:       vol1m,
+		VolumeRatio:    volRatio,
+		OIChange3m:     oiChange,
+		FundingRate:    fundingPct,
+		LongShortRatio: st.longShortRatio,
+		TradeDelta1m:   tradeDelta,
+		Liquidation1m:  liq1m,
+		BTCDecoupled:   btcDecoupled,
+		BTCChange5m:    btcChange,
+		SpreadPct:      spread,
+		ATRPct:         atrPct,
+		SuggestedSL:    suggestedSL,
+		SuggestedTP:    suggestedTP,
+		Timestamp:      receivedAt,
+		SignalID:       signals.NewID(),
 	}, true
 }
 

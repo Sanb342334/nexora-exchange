@@ -46,15 +46,10 @@ func (n *Notifier) setMyCommands(ctx context.Context) error {
 	payload := map[string]interface{}{
 		"commands": []map[string]string{
 			{"command": "start", "description": "Подписаться на сигналы"},
+			{"command": "panel", "description": "Главный trading terminal"},
 			{"command": "check", "description": "Диагностика сканера"},
-			{"command": "test", "description": "Тестовый сигнал"},
-			{"command": "demotrade", "description": "Demo autotrade ~$100"},
-			{"command": "traders", "description": "3 virtual traders stats"},
+			{"command": "help", "description": "Справка и старые команды"},
 			{"command": "stats", "description": "Статус и метрики"},
-			{"command": "logs", "description": "Последние логи"},
-			{"command": "top", "description": "Топ сигналов"},
-			{"command": "help", "description": "Справка"},
-			{"command": "stop", "description": "Отписаться"},
 		},
 	}
 	body, _ := json.Marshal(payload)

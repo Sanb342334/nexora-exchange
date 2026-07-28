@@ -55,19 +55,13 @@ func LoadSymbols(
 	log *logger.Loggers,
 ) []string {
 	if syms := cfg.StaticSymbols(); len(syms) > 0 {
-		log.Scanner.Info().Int("count", len(syms)).Str("version", BuildVersion).Msg("SYMBOLS from env")
-		return syms
+		return resolveCandidateUniverse(ctx, rest, log, syms, "SYMBOLS env")
 	}
 
 	if cfg.UseDefaultSymbols() {
 		path := cfg.SymbolsFile
 		if syms, err := LoadSymbolsFromFile(path); err == nil && len(syms) > 0 {
-			log.Scanner.Info().
-				Int("count", len(syms)).
-				Str("file", path).
-				Str("version", BuildVersion).
-				Msg("symbol list from file")
-			return syms
+			return resolveCandidateUniverse(ctx, rest, log, syms, "symbols file: "+path)
 		} else if err != nil {
 			log.Errors.Warn().Err(err).Str("file", path).Msg("symbols file not loaded")
 		}
@@ -77,8 +71,7 @@ func LoadSymbols(
 		for attempt := 1; attempt <= 3; attempt++ {
 			symbols, err := rest.FetchActiveUSDTPairs(ctx, cfg.MinVolume24H)
 			if err == nil {
-				log.Scanner.Info().Int("count", len(symbols)).Str("version", BuildVersion).Msg("symbols from Bybit REST")
-				return symbols
+				return resolveCandidateUniverse(ctx, rest, log, symbols, "Bybit tickers")
 			}
 			if IsGeoBlock(err) {
 				log.Errors.Warn().Err(err).Msg("geo-block on REST, trying symbols.list file")
@@ -95,16 +88,57 @@ func LoadSymbols(
 
 	path := cfg.SymbolsFile
 	if syms, err := LoadSymbolsFromFile(path); err == nil && len(syms) > 0 {
-		log.Scanner.Info().Int("count", len(syms)).Str("file", path).Str("version", BuildVersion).Msg("fallback symbol file")
-		return syms
+		return resolveCandidateUniverse(ctx, rest, log, syms, "fallback symbols file: "+path)
 	}
 
 	log.Errors.Warn().Str("version", BuildVersion).Msg("no symbols loaded")
 	return nil
 }
 
+func resolveCandidateUniverse(
+	ctx context.Context,
+	rest *RESTClient,
+	log *logger.Loggers,
+	candidates []string,
+	source string,
+) []string {
+	filtered, report := FilterCryptoCandidates(candidates, source)
+	logUniverseReport(log, report)
+	if len(filtered) == 0 {
+		log.Errors.Warn().Str("source", source).Msg("crypto universe has no valid candidates")
+		return nil
+	}
+
+	validated, err := rest.ValidateCryptoUniverse(ctx, filtered)
+	if err == nil {
+		log.Scanner.Info().
+			Str("source", source).
+			Int("count", len(validated)).
+			Str("version", BuildVersion).
+			Msg("active crypto universe validated by Bybit")
+		return validated
+	}
+
+	// A geo-block must not silently stop the scanner. The filtered fallback is
+	// still crypto-only by syntax and deny-list, but the warning makes the
+	// weaker validation mode visible in health logs.
+	log.Errors.Warn().
+		Err(err).
+		Str("source", source).
+		Int("fallback_count", len(filtered)).
+		Msg("Bybit universe validation unavailable; using filtered fallback")
+	return filtered
+}
+
 func TunePollIntervals(cfg *config.Config, symbolCount int) {
-	if symbolCount > 80 {
+	if symbolCount > 500 {
+		// 630 symbols × two per-symbol REST endpoints must not form a
+		// synchronized request storm. WS remains realtime; these contextual
+		// metrics are sampled more slowly with bounded poller concurrency.
+		cfg.OIPollInterval = 2 * time.Minute
+		cfg.LSPollInterval = 5 * time.Minute
+		cfg.WSShardSize = 25
+	} else if symbolCount > 80 {
 		cfg.OIPollInterval = 30 * time.Second
 		cfg.LSPollInterval = 120 * time.Second
 		cfg.WSShardSize = 25

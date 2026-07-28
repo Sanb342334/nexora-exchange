@@ -1,5 +1,12 @@
 bin/
+logs/
 logs/*.log
 logs/subscribers.json
+logs/**/*.json
+logs/**/*.jsonl
+logs/**/*.db
+logs/**/*.db-wal
 .env
 *.exe
+*.exe~
+config.local.yaml

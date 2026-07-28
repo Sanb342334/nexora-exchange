@@ -144,7 +144,11 @@ func acceptsTapeSync(p Profile, sig analyzer.Signal) (bool, string) {
 	if p.MinTriggers > 0 && len(sig.Triggers) < p.MinTriggers {
 		return false, "triggers_low"
 	}
-	if sig.SpreadPct > 0.22 {
+	maxSpread := 0.22
+	if p.MaxSpreadPct > 0 {
+		maxSpread = p.MaxSpreadPct
+	}
+	if sig.SpreadPct > maxSpread {
 		return false, "spread_wide"
 	}
 	if sig.AlertType == "" {
