@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -126,12 +128,23 @@ func readMetadata(lockPath string) Metadata {
 }
 
 func processAlive(pid int) bool {
-	out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH").Output()
+	if pid <= 0 {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH").Output()
+		if err != nil {
+			return false
+		}
+		s := string(out)
+		return strings.Contains(s, strconv.Itoa(pid)) && !strings.Contains(strings.ToLower(s), "no tasks")
+	}
+	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
-	s := string(out)
-	return strings.Contains(s, strconv.Itoa(pid)) && !strings.Contains(strings.ToLower(s), "no tasks")
+	// Signal 0 checks existence without killing (Linux/macOS/Railway containers).
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 func newInstanceID() string {

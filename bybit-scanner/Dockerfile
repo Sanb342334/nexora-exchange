@@ -19,13 +19,13 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /app/scanner .
-COPY config.yaml .
+COPY config.yaml config.railway.yaml .
 COPY symbols.list .
 
 RUN mkdir -p /app/logs && chmod 755 /app/logs
 
 ENV LOG_DIR=/app/logs
-ENV CONFIG_PATH=/app/config.yaml
+ENV CONFIG_PATH=/app/config.railway.yaml
 ENV SYMBOLS_FILE=/app/symbols.list
 
 CMD ["./scanner"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -362,7 +363,7 @@ func Load() (*Config, error) {
 		LogDir:            envString("LOG_DIR", "logs"),
 		BybitRESTURL:      envString("BYBIT_REST_URL", "https://api.bybit.com"),
 		BybitWSURL:        envString("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/linear"),
-		ConfigPath:        envString("CONFIG_PATH", "config.yaml"),
+		ConfigPath:        resolveConfigPath(envString("CONFIG_PATH", "config.yaml")),
 		SymbolsFile:       envString("SYMBOLS_FILE", "symbols.list"),
 		OIPollInterval:    time.Duration(envInt("OI_POLL_SEC", 10)) * time.Second,
 		LSPollInterval:    time.Duration(envInt("LS_POLL_SEC", 60)) * time.Second,
@@ -424,6 +425,33 @@ func (c *Config) StaticSymbols() []string {
 
 func (c *Config) UseDefaultSymbols() bool {
 	return c.useDefaultSymbols
+}
+
+func resolveConfigPath(requested string) string {
+	if requested == "" {
+		requested = "config.yaml"
+	}
+	if _, err := os.Stat(requested); err == nil {
+		return requested
+	}
+	// config.local.yaml is gitignored and never shipped in Docker/Railway images.
+	if filepath.Base(requested) != "config.local.yaml" {
+		return requested
+	}
+	for _, fallback := range []string{
+		"config.railway.yaml",
+		"/app/config.railway.yaml",
+		"config.yaml",
+		"/app/config.yaml",
+	} {
+		if fallback == requested {
+			continue
+		}
+		if _, err := os.Stat(fallback); err == nil {
+			return fallback
+		}
+	}
+	return requested
 }
 
 func (c *Config) loadYAML() error {
