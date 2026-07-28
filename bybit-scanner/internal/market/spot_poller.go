@@ -16,6 +16,7 @@ type SpotPoller struct {
 	log      *logger.Loggers
 	symbols  []string
 	interval time.Duration
+	onPoll   func(time.Time)
 }
 
 func NewSpotPoller(rest *RESTClient, store *carry.BasisStore, log *logger.Loggers, symbols []string) *SpotPoller {
@@ -23,6 +24,10 @@ func NewSpotPoller(rest *RESTClient, store *carry.BasisStore, log *logger.Logger
 		rest: rest, store: store, log: log, symbols: append([]string(nil), symbols...),
 		interval: 2 * time.Second,
 	}
+}
+
+func (p *SpotPoller) SetOnPoll(fn func(time.Time)) {
+	p.onPoll = fn
 }
 
 func (p *SpotPoller) Start(ctx context.Context) {
@@ -43,6 +48,7 @@ func (p *SpotPoller) Start(ctx context.Context) {
 
 func (p *SpotPoller) poll(ctx context.Context) {
 	requestCtx, cancel := context.WithTimeout(ctx, time.Second)
+	now := time.Now().UTC()
 	quotes, err := p.rest.FetchSpotQuotes(requestCtx, p.symbols)
 	cancel()
 	if err != nil {
@@ -53,5 +59,8 @@ func (p *SpotPoller) poll(ctx context.Context) {
 		p.store.UpdateSpot(symbol, carry.Quote{
 			Bid: quote.Bid, Ask: quote.Ask, Last: quote.Last, UpdatedAt: quote.UpdatedAt,
 		})
+	}
+	if p.onPoll != nil {
+		p.onPoll(now)
 	}
 }

@@ -32,6 +32,9 @@ func (m *Manager) Mode() TradingMode {
 }
 
 func (m *Manager) Evaluate(sig analyzer.Signal, candles []analyzer.Candle, slippagePct float64) TradeRecommendation {
+	if sig.SetupType == "CARRY_ARBITRAGE" {
+		return m.evaluateCarry(sig)
+	}
 	rec := TradeRecommendation{
 		Signal:    sig,
 		Mode:      m.flags.Mode,
@@ -153,6 +156,48 @@ func (m *Manager) Evaluate(sig analyzer.Signal, candles []analyzer.Candle, slipp
 		rec.Warnings = append(rec.Warnings, pf.reasons...)
 	}
 
+	return rec
+}
+
+func (m *Manager) evaluateCarry(sig analyzer.Signal) TradeRecommendation {
+	rec := TradeRecommendation{
+		Signal: sig, Mode: m.flags.Mode, Timestamp: sig.Timestamp,
+	}
+	if rec.Timestamp.IsZero() {
+		rec.Timestamp = time.Now().UTC()
+	}
+	mode := m.flags.Mode
+	equity := m.flags.Equity(mode, m.cfg.Account.LiveEquityUSDT)
+	if equity <= 0 {
+		equity = m.cfg.Account.DemoEquityUSDT
+	}
+	rec.Side = SideShort
+	rec.Entry = sig.Price
+	if rec.Entry <= 0 {
+		return rec.reject("carry_no_price")
+	}
+	rec.StopLoss = sig.SuggestedSL
+	rec.TakeProfit = sig.SuggestedTP
+	rec.SLMethod = "carry_basis"
+	rec.SLDistancePct = slDistancePct(rec.Entry, rec.StopLoss)
+	rec.TPDistancePct = tpDistancePct(rec.Entry, rec.TakeProfit)
+	rec.RiskReward = rrRatio(rec.Entry, rec.StopLoss, rec.TakeProfit)
+	if rec.RiskReward <= 0 {
+		rec.RiskReward = 1.2
+	}
+	rec.Leverage = 1
+	rec.LeverageReason = "carry_delta_neutral"
+	notional := equity * 0.85
+	if cap := m.cfg.Sizing.MaxNotionalUSDT; cap > 0 && notional > cap {
+		notional = cap
+	}
+	rec.NotionalUSDT = notional
+	rec.Qty = notional / rec.Entry
+	rec.RiskUSDT = notional * 0.002
+	rec.RiskPct = rec.RiskUSDT / equity * 100
+	rec.MarginUSDT = notional / float64(rec.Leverage)
+	rec.Bucket = bucketForSymbol(sig.Symbol, m.cfg.Portfolio.CorrelationBuckets)
+	rec.Verdict = VerdictApproved
 	return rec
 }
 

@@ -45,6 +45,7 @@ type HistoryEntry struct {
 	Mode          string
 	Duration      time.Duration
 	IndicatorTags []string
+	ExitPrice     float64
 }
 
 func NewJournal(logDir, profileID string) *Journal {
@@ -127,6 +128,7 @@ func (j *Journal) Recent(limit int) []HistoryEntry {
 			Demo          bool      `json:"demo"`
 			Mode          string    `json:"mode"`
 			Reasons       []string  `json:"reasons"`
+			ExitPrice     float64   `json:"exit_price"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &row) != nil {
 			continue
@@ -148,6 +150,7 @@ func (j *Journal) Recent(limit int) []HistoryEntry {
 			e.PnL = row.RealizedPnL
 			e.CloseReason = row.CloseReason
 			e.Demo = row.Demo || row.OrderID != ""
+			e.ExitPrice = row.ExitPrice
 			if !row.OpenedAt.IsZero() && !row.ClosedAt.IsZero() {
 				e.Duration = row.ClosedAt.Sub(row.OpenedAt)
 			}
@@ -194,18 +197,40 @@ func filterIndicatorTags(reasons []string) []string {
 func (j *Journal) RecordClose(rec risk.TradeRecommendation, profileID, demoOrderID string, pnl float64, reason string, closedAt time.Time) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	exit := rec.Entry
+	if rec.Signal.Price > 0 && rec.Qty > 0 && pnl != 0 {
+		delta := pnl / rec.Qty
+		if rec.Side == risk.SideLong {
+			exit = rec.Entry + delta
+		} else {
+			exit = rec.Entry - delta
+		}
+	}
 	row := map[string]interface{}{
 		"event":         "closed",
 		"profile_id":    profileID,
 		"signal_id":     rec.Signal.SignalID,
 		"symbol":        rec.Signal.Symbol,
 		"side":          rec.Side,
+		"score":         rec.Signal.Score,
+		"alert_type":    rec.Signal.AlertType,
+		"setup":         rec.Signal.SetupType,
+		"entry":         rec.Entry,
+		"exit_price":    exit,
+		"sl":            rec.StopLoss,
+		"tp":            rec.TakeProfit,
+		"leverage":      rec.Leverage,
+		"notional_usdt": rec.NotionalUSDT,
+		"risk_usdt":     rec.RiskUSDT,
+		"rr":            rec.RiskReward,
 		"opened_at":     rec.Timestamp,
 		"demo_order_id": demoOrderID,
 		"demo":          demoOrderID != "",
 		"realized_pnl":  pnl,
 		"close_reason":  reason,
 		"closed_at":     closedAt,
+		"mode":          rec.Mode,
+		"reasons":       rec.Signal.Reasons,
 	}
 	data, _ := json.Marshal(row)
 	f, err := os.OpenFile(j.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

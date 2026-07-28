@@ -156,6 +156,9 @@ func NewManager(cfg *config.Config, baseRisk config.RiskConfig, flags risk.Runti
 		if p.MinSLLiqBuffer > 0 {
 			rc.Leverage.MinSLLiqBufferPct = p.MinSLLiqBuffer
 		}
+		if p.EquityUSDT > 0 {
+			rc.Account.DemoEquityUSDT = p.EquityUSDT
+		}
 		if p.MaxNotionalUSDT > 0 {
 			rc.Sizing.MaxNotionalUSDT = p.MaxNotionalUSDT
 		}

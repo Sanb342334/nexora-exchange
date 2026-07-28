@@ -705,6 +705,8 @@ func (n *Notifier) handleMessage(ctx context.Context, msg *tgMessage) {
 		n.sendTraderDetail(ctx, chatID, cmd)
 	case strings.HasPrefix(cmd, "/history"):
 		n.sendTraderHistory(ctx, chatID, cmd)
+	case strings.HasPrefix(cmd, "/report"):
+		n.sendTraderReport(ctx, chatID, cmd)
 	case text == btnStats || cmd == "/stats":
 		n.sendStats(ctx, chatID)
 	case text == btnTop || cmd == "/top":
@@ -859,7 +861,7 @@ func (n *Notifier) sendHelp(ctx context.Context, chatID int64) {
 		"<b>/start</b> — подписаться на сигналы\n" +
 		"<b>/stop</b> — отписаться\n\n" +
 		"<b>/panel</b> — главный trading terminal: позиции, профили и настройки\n" +
-		"<b>/history</b>, <b>/trader</b>, <b>/stats</b> — совместимые подробные команды\n\n" +
+		"<b>/history</b>, <b>/report</b>, <b>/trader</b>, <b>/stats</b> — подробная статистика и отчёты\n\n" +
 		"<b>Кнопки:</b>\n" +
 		"📋 Логи — последние записи сканера\n" +
 		"🧪 Тестовый сигнал — пример алерта\n" +
@@ -1007,6 +1009,28 @@ func (n *Notifier) sendTraderHistory(ctx context.Context, chatID int64, cmd stri
 		return
 	}
 	n.sendTraderHistoryPage(ctx, chatID, id, 0)
+}
+
+func (n *Notifier) sendTraderReport(ctx context.Context, chatID int64, cmd string) {
+	if n.traderMgr == nil {
+		return
+	}
+	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/report"))
+	if arg == "" || strings.EqualFold(arg, "all") || arg == "все" {
+		views, overall := n.traderMgr.Dashboard()
+		text := traders.FormatGlobalReportHTML(views, overall)
+		_ = n.sendToChat(ctx, chatID, text, traders.TradersInlineKeyboard())
+		return
+	}
+	id := traders.ResolveProfileID(arg)
+	p, s, ok := n.traderMgr.ProfileByID(id)
+	if !ok {
+		_ = n.sendToChat(ctx, chatID, "Трейдер не найден. Пример: /report катя", traders.TradersInlineKeyboard())
+		return
+	}
+	history, _ := n.traderMgr.History(id, 0)
+	text := traders.FormatTraderReportHTML(p, s, n.traderMgr.EquityForProfile(id), n.traderMgr.DemoAutotradeEnabled(), history)
+	_ = n.sendToChat(ctx, chatID, text, traders.TraderHistoryInlineKeyboard(id, history, 0, len(history)))
 }
 
 func (n *Notifier) sendTraderHistoryPage(ctx context.Context, chatID int64, id string, offset int) {

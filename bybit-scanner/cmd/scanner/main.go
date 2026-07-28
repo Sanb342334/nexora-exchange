@@ -99,10 +99,12 @@ func main() {
 	yamlCfg := cfg.Snapshot()
 	var basisStore *carry.BasisStore
 	var carryJournal *carry.Journal
+	var spotPoller *market.SpotPoller
 	if yamlCfg.Carry.Enabled {
 		basisStore = carry.NewBasisStore()
 		carryJournal = carry.NewJournal(cfg.LogDir)
-		market.NewSpotPoller(rest, basisStore, loggers, symbols).Start(ctx)
+		spotPoller = market.NewSpotPoller(rest, basisStore, loggers, symbols)
+		spotPoller.Start(ctx)
 	}
 	riskFlags := risk.LoadRuntimeFlags(yamlCfg.Risk.Account.DemoEquityUSDT)
 	traderMgr := traders.NewManager(cfg, yamlCfg.Risk, riskFlags, cfg.LogDir)
@@ -117,6 +119,15 @@ func main() {
 	notify.SetDemoTrader(demoTrader)
 	notify.SetSymbolCount(len(symbols))
 	notify.Start(ctx, 3)
+	var carryState *carryEnqueueState
+	if yamlCfg.Carry.Enabled {
+		carryState = newCarryEnqueueState()
+	}
+	if spotPoller != nil && basisStore != nil && carryState != nil {
+		spotPoller.SetOnPoll(func(at time.Time) {
+			scanCarryBatch(at, symbols, store, basisStore, carryJournal, carryState, traderMgr, notify, execQueue, signalLedger, cfg, loggers)
+		})
+	}
 	if traderMgr.DemoAutotradeEnabled() {
 		go reconcileDemoTrades(ctx, demoTrader, traderMgr, loggers)
 	}
@@ -156,7 +167,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		processEvents(ctx, ws.Events(), store, btcTracker, btcContext, orderbooks, detector, stratEngine, momentumEngine, indicatorEngine, qualityEngine, traderMgr, notify, execQueue, basisStore, carryJournal, signalLedger, cfg, loggers)
+		processEvents(ctx, ws.Events(), store, btcTracker, btcContext, orderbooks, detector, stratEngine, momentumEngine, indicatorEngine, qualityEngine, traderMgr, notify, execQueue, basisStore, carryJournal, carryState, signalLedger, cfg, loggers)
 	}()
 
 	<-ctx.Done()
@@ -201,6 +212,7 @@ func processEvents(
 	execQueue *execution.Queue,
 	basisStore *carry.BasisStore,
 	carryJournal *carry.Journal,
+	carryState *carryEnqueueState,
 	signalLedger *signals.Repository,
 	cfg *config.Config,
 	log *logger.Loggers,
@@ -213,7 +225,7 @@ func processEvents(
 			if !ok {
 				return
 			}
-			handleEvent(ev, store, btc, btcContext, orderbooks, detector, stratEngine, momentumEngine, indicatorEngine, qualityEngine, traderMgr, notify, execQueue, basisStore, carryJournal, signalLedger, cfg, log)
+			handleEvent(ev, store, btc, btcContext, orderbooks, detector, stratEngine, momentumEngine, indicatorEngine, qualityEngine, traderMgr, notify, execQueue, basisStore, carryJournal, carryState, signalLedger, cfg, log)
 		}
 	}
 }
@@ -234,6 +246,7 @@ func handleEvent(
 	execQueue *execution.Queue,
 	basisStore *carry.BasisStore,
 	carryJournal *carry.Journal,
+	carryState *carryEnqueueState,
 	signalLedger *signals.Repository,
 	cfg *config.Config,
 	log *logger.Loggers,
@@ -261,7 +274,7 @@ func handleEvent(
 	case market.EventTicker:
 		st.UpdateTicker(ev.Price, ev.Bid, ev.Ask, ev.Funding, ev.OpenInterest, ev.ReceivedAt)
 		recordSignalMark(signalLedger, ev.Symbol, ev.Price, ev.ExchangeAt, log)
-		recordCarryOpportunity(ev, st, basisStore, carryJournal, traderMgr, notify, execQueue, signalLedger, cfg, log)
+		recordCarryOpportunity(ev, st, basisStore, carryJournal, carryState, traderMgr, notify, execQueue, signalLedger, cfg, log)
 		if ev.Symbol == analyzer.BTCSymbol && ev.Price > 0 {
 			btc.Update(ev.Price, ev.ReceivedAt)
 		}
@@ -335,11 +348,98 @@ func handleEvent(
 	enqueueTrade(execQueue, traderMgr, notify, signalLedger, cfg, log, *sig, st.RecentCandles(15))
 }
 
+type carryEnqueueState struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func newCarryEnqueueState() *carryEnqueueState {
+	return &carryEnqueueState{last: make(map[string]time.Time)}
+}
+
+func (s *carryEnqueueState) allow(symbol string, now time.Time, cooldown time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.last[symbol]; ok && now.Sub(last) < cooldown {
+		return false
+	}
+	s.last[symbol] = now
+	return true
+}
+
+func scanCarryBatch(
+	at time.Time,
+	symbols []string,
+	store *analyzer.Store,
+	basis *carry.BasisStore,
+	journal *carry.Journal,
+	state *carryEnqueueState,
+	traderMgr *traders.Manager,
+	notify *notifier.Notifier,
+	execQueue *execution.Queue,
+	signalLedger *signals.Repository,
+	cfg *config.Config,
+	log *logger.Loggers,
+) {
+	if basis == nil || journal == nil || state == nil {
+		return
+	}
+	carryCfg := cfg.Snapshot().Carry
+	if !carryCfg.PaperEnabled {
+		return
+	}
+	for _, op := range carry.ScanOpportunities(basis, symbols, carryCfg, at) {
+		vol := 0.0
+		if store != nil {
+			vol = store.Ensure(op.Symbol).SnapshotQuality(op.Symbol, at).NormalizedVolumeUSDT
+		}
+		enqueueCarryOp(op, at, vol, journal, state, traderMgr, notify, execQueue, signalLedger, cfg, log, nil)
+	}
+}
+
+func enqueueCarryOp(
+	op carry.Opportunity,
+	at time.Time,
+	vol float64,
+	journal *carry.Journal,
+	state *carryEnqueueState,
+	traderMgr *traders.Manager,
+	notify *notifier.Notifier,
+	execQueue *execution.Queue,
+	signalLedger *signals.Repository,
+	cfg *config.Config,
+	log *logger.Loggers,
+	st *analyzer.SymbolState,
+) {
+	if state != nil && !state.allow(op.Symbol, at, 45*time.Second) {
+		return
+	}
+	if err := journal.Record(op); err != nil {
+		log.Errors.Warn().Err(err).Str("symbol", op.Symbol).Msg("carry opportunity journal failed")
+		return
+	}
+	log.Scanner.Info().
+		Str("symbol", op.Symbol).
+		Float64("basis_bps", op.BasisBps).
+		Float64("net_bps", op.ExpectedNetBps).
+		Msg("carry opportunity")
+	if traderMgr == nil || !traderMgr.Enabled() {
+		return
+	}
+	sig := carry.SignalFromOpportunity(op, vol, at)
+	var candles []analyzer.Candle
+	if st != nil {
+		candles = st.RecentCandles(15)
+	}
+	enqueueTrade(execQueue, traderMgr, notify, signalLedger, cfg, log, sig, candles)
+}
+
 func recordCarryOpportunity(
 	ev market.MarketEvent,
 	st *analyzer.SymbolState,
 	basis *carry.BasisStore,
 	journal *carry.Journal,
+	state *carryEnqueueState,
 	traderMgr *traders.Manager,
 	notify *notifier.Notifier,
 	execQueue *execution.Queue,
@@ -361,25 +461,11 @@ func recordCarryOpportunity(
 	if !ok {
 		return
 	}
-	if err := journal.Record(op); err != nil {
-		log.Errors.Warn().Err(err).Str("symbol", ev.Symbol).Msg("carry opportunity journal failed")
-		return
-	}
-	log.Scanner.Info().
-		Str("symbol", ev.Symbol).
-		Float64("basis_bps", op.BasisBps).
-		Float64("net_bps", op.ExpectedNetBps).
-		Msg("paper carry opportunity")
-	if traderMgr == nil || !traderMgr.Enabled() {
-		return
-	}
 	vol := 0.0
 	if st != nil {
-		s := st.SnapshotQuality(ev.Symbol, ev.ReceivedAt)
-		vol = s.NormalizedVolumeUSDT
+		vol = st.SnapshotQuality(ev.Symbol, ev.ReceivedAt).NormalizedVolumeUSDT
 	}
-	sig := carry.SignalFromOpportunity(op, vol, ev.ReceivedAt)
-	enqueueTrade(execQueue, traderMgr, notify, signalLedger, cfg, log, sig, st.RecentCandles(15))
+	enqueueCarryOp(op, ev.ReceivedAt, vol, journal, state, traderMgr, notify, execQueue, signalLedger, cfg, log, st)
 }
 
 func recordIndicatorDecision(ledger *signals.Repository, decision *indicators.Decision, log *logger.Loggers) {

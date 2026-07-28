@@ -174,6 +174,8 @@ func (n *Notifier) routePanelCallback(ctx context.Context, chatID int64, data st
 		}
 	case "t":
 		n.sendTradersOverview(ctx, chatID)
+	case "r":
+		n.sendTraderReport(ctx, chatID, "/report")
 	case "d":
 		if len(parts) == 2 {
 			n.sendTraderDetail(ctx, chatID, "/trader "+parts[1])
@@ -230,7 +232,7 @@ func (n *Notifier) routePanelCallback(ctx context.Context, chatID int64, data st
 func panelKeyboard() map[string]interface{} {
 	return map[string]interface{}{"inline_keyboard": [][]map[string]string{
 		{{"text": "📂 Позиции", "callback_data": panelCallback("o", "0")}, {"text": "👥 Трейдеры", "callback_data": panelCallback("t")}},
-		{{"text": "🏦 Demo позиции", "callback_data": panelCallback("m")}},
+		{{"text": "📊 Отчёт", "callback_data": panelCallback("r")}, {"text": "🏦 Demo позиции", "callback_data": panelCallback("m")}},
 		{{"text": "⭐ Избранное", "callback_data": panelCallback("f")}, {"text": "🔕 Игнор", "callback_data": panelCallback("i")}},
 		{{"text": "⚙️ Настройки", "callback_data": panelCallback("s")}, {"text": "🔄 Обновить", "callback_data": panelCallback("h")}},
 	}}
