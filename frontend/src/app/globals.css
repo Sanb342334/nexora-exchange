@@ -1,0 +1,346 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --nexora-bg: #07090F;
+  --nexora-card: #10131D;
+  --nexora-accent: #7B5CFF;
+  --nexora-neon: #1ED760;
+  --nexora-surface: #0c1018;
+  --nexora-sidebar: #0a0d14;
+  --nexora-header: rgba(7, 9, 15, 0.85);
+  --nexora-card-hover: #141824;
+  --nexora-border: rgba(255, 255, 255, 0.06);
+  --nexora-border-strong: rgba(255, 255, 255, 0.12);
+  --nexora-hover: rgba(255, 255, 255, 0.04);
+  --nexora-muted: #8b93a7;
+  --nexora-text: #f2f4f8;
+}
+
+body {
+  @apply bg-nexora-bg text-nexora-text antialiased;
+  background-color: #07090F;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Telegram Mini App — compact, scrollable, tappable */
+html.tg-miniapp,
+body.tg-miniapp {
+  min-height: var(--tg-viewport-stable-height, 100dvh);
+  height: var(--tg-viewport-stable-height, 100dvh);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  background-color: #07090F !important;
+}
+
+.tg-miniapp .tg-shell {
+  height: var(--tg-viewport-stable-height, 100dvh);
+  max-height: var(--tg-viewport-stable-height, 100dvh);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* slightly denser UI so more fits on phone */
+  font-size: 13px;
+}
+
+.tg-miniapp .tg-shell > .flex-1 {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tg-miniapp .tg-shell main {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+}
+
+.tg-miniapp a,
+.tg-miniapp button,
+.tg-miniapp [role='button'],
+.tg-miniapp .btn,
+.tg-miniapp .btn-primary,
+.tg-miniapp .nav-link {
+  position: relative;
+  z-index: 2;
+  touch-action: manipulation;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.tg-miniapp {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.tg-miniapp header {
+  padding-top: max(0px, env(safe-area-inset-top));
+  z-index: 40;
+}
+
+.tg-miniapp .tg-balance-chip {
+  display: inline-flex !important;
+}
+
+.tg-miniapp .tg-terminal {
+  gap: 0.4rem;
+}
+
+@media (max-width: 900px) {
+  .tg-miniapp aside,
+  .tg-miniapp footer {
+    display: none !important;
+  }
+  .tg-miniapp main {
+    padding: 0.4rem 0.55rem calc(4.25rem + env(safe-area-inset-bottom)) !important;
+  }
+  .tg-miniapp .hero-banner {
+    max-height: none;
+  }
+}
+
+.tg-miniapp input,
+.tg-miniapp select,
+.tg-miniapp textarea {
+  font-size: 16px;
+}
+
+/* Admin panel scroll + clickable controls */
+.admin-shell {
+  display: flex;
+  flex-direction: row;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+.admin-shell a,
+.admin-shell button,
+.admin-shell [role='button'],
+.admin-shell .btn,
+.admin-shell .btn-primary,
+.admin-shell .btn-secondary,
+.admin-shell .nav-link {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.admin-shell__main {
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  min-height: 0;
+  flex: 1 1 auto;
+  pointer-events: auto;
+}
+
+@layer components {
+  .glass {
+    @apply bg-[rgba(16,19,28,0.92)] backdrop-blur-xl border border-white/[0.06];
+  }
+
+  .glass-card {
+    @apply glass rounded-[18px];
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+
+  .card {
+    @apply glass-card p-5;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-[12px] px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-nexora-gradient text-white hover:brightness-110;
+    box-shadow: 0 4px 24px rgba(123, 97, 255, 0.35);
+  }
+
+  .btn-secondary {
+    @apply btn bg-white/[0.03] text-nexora-text border border-white/[0.08] hover:bg-white/[0.06];
+  }
+
+  .btn-success {
+    @apply btn font-bold hover:brightness-110;
+    background-color: #1ED760;
+    color: #07090F;
+    box-shadow: 0 0 20px rgba(30, 215, 96, 0.35);
+  }
+
+  .btn-danger {
+    @apply btn bg-nexora-error text-white hover:brightness-110;
+  }
+
+  .btn-outline {
+    @apply btn border border-white/[0.15] text-white bg-transparent hover:bg-white/[0.04];
+  }
+
+  .btn-ghost {
+    @apply btn text-nexora-muted hover:text-nexora-text hover:bg-white/[0.04];
+  }
+
+  .input {
+    @apply w-full rounded-[10px] bg-[#07090F] border border-white/[0.08] px-4 py-2.5 text-sm text-nexora-text placeholder-nexora-muted focus:border-nexora-accent/50 focus:ring-1 focus:ring-nexora-accent/20 focus:outline-none transition;
+  }
+
+  .select {
+    @apply input appearance-none cursor-pointer;
+  }
+
+  .label {
+    @apply block text-[11px] font-semibold text-nexora-muted mb-1.5 uppercase tracking-wider;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+
+  .th {
+    @apply text-left text-[10px] font-semibold text-nexora-muted uppercase tracking-[0.08em] px-4 py-3.5 bg-transparent;
+  }
+
+  .td {
+    @apply px-4 py-4 text-sm text-nexora-text border-t border-white/[0.04];
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm text-nexora-muted transition hover:text-nexora-text hover:bg-white/[0.04];
+  }
+
+  .nav-link-active {
+    @apply nav-link bg-nexora-accent/10 text-nexora-accent font-semibold;
+  }
+
+  /* Mockup-style buy/sell tabs with underline */
+  .tab {
+    @apply px-4 py-2.5 text-sm font-bold transition-all duration-200 relative;
+  }
+
+  .tab-active-buy {
+    @apply tab;
+    color: #0ecb81;
+  }
+
+  .tab-active-buy::after {
+    content: '';
+    @apply absolute bottom-0 left-0 right-0 h-0.5 rounded-full;
+    background-color: #0ecb81;
+    box-shadow: 0 0 12px rgba(14, 203, 129, 0.6);
+  }
+
+  .tab-active-sell {
+    @apply tab text-nexora-error;
+  }
+
+  .tab-active-sell::after {
+    content: '';
+    @apply absolute bottom-0 left-0 right-0 h-0.5 bg-nexora-error rounded-full;
+  }
+
+  .tab-inactive {
+    @apply tab text-nexora-muted hover:text-nexora-text;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-[12px] bg-white/[0.06];
+  }
+
+  .top-nav-active {
+    @apply text-nexora-accent relative after:absolute after:bottom-0 after:left-2 after:right-2 after:h-0.5 after:bg-nexora-accent after:rounded-full;
+  }
+
+  .price-neon {
+    @apply font-display font-bold;
+    color: #0ecb81;
+    text-shadow: 0 0 20px rgba(14, 203, 129, 0.25);
+  }
+
+  .btn-buy-neon {
+    @apply inline-flex items-center justify-center rounded-[8px] px-6 py-2.5 text-sm font-bold hover:brightness-110 transition;
+    background-color: #0ecb81;
+    color: #0b0e14;
+    box-shadow: 0 0 20px rgba(14, 203, 129, 0.35);
+  }
+
+  .filter-chip {
+    @apply flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-[#0B0E14] px-3 py-2 text-sm cursor-default;
+  }
+
+  .market-row {
+    @apply transition-colors;
+  }
+
+  .market-row:hover {
+    background-color: rgba(123, 97, 255, 0.04);
+  }
+
+  .market-table thead tr {
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .chat-bubble-mine {
+    @apply rounded-2xl rounded-br-md px-4 py-2.5 text-sm;
+    background: linear-gradient(135deg, #7b61ff 0%, #6f3dff 100%);
+    color: white;
+  }
+
+  .chat-bubble-theirs {
+    @apply rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white/[0.06] text-nexora-text;
+  }
+
+  .wallet-hero {
+    @apply relative overflow-hidden rounded-[20px] border border-white/[0.06] p-6;
+    background: linear-gradient(135deg, #161b28 0%, #10131c 50%, #0b0e14 100%);
+  }
+
+  .wallet-hero::before {
+    content: '';
+    @apply absolute inset-0 pointer-events-none;
+    background: radial-gradient(ellipse at 80% 20%, rgba(123, 97, 255, 0.15), transparent 50%);
+  }
+
+  .page-market {
+    @apply w-full;
+  }
+
+  .hero-banner {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (max-width: 640px) {
+    .btn-buy-neon,
+    .btn-primary,
+    .btn-success {
+      min-height: 44px;
+    }
+
+    .th, .td {
+      @apply px-3;
+    }
+  }
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: rgba(123, 97, 255, 0.4); border-radius: 2px; }

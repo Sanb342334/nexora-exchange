@@ -51,7 +51,7 @@ function LegalModal({ title, body, onClose }: { title: string; body: string; onC
 }
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, loginWithTelegram, user, loading: authLoading, isTelegram } = useAuth();
   const router = useRouter();
   const { t } = useLocale();
   const l = t.login;
@@ -64,24 +64,51 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+  const [tgBusy, setTgBusy] = useState(false);
 
   useEffect(() => {
     const next = new URLSearchParams(window.location.search).get('next');
     if (next?.startsWith('/') && !next.startsWith('//')) setNextPath(next);
   }, []);
 
+  useEffect(() => {
+    if (authLoading) return;
+    if (user) {
+      router.replace(nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/trade');
+    }
+  }, [authLoading, user, router, nextPath]);
+
+  useEffect(() => {
+    if (authLoading || user || !isTelegram) return;
+    let cancelled = false;
+    setTgBusy(true);
+    loginWithTelegram()
+      .then((u) => {
+        if (!cancelled && u) router.replace(nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/trade');
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof ApiError ? err.message : 'Не удалось войти через Telegram');
+      })
+      .finally(() => {
+        if (!cancelled) setTgBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // intentionally once when telegram session without user
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user, isTelegram]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const loggedIn = await login(username, password, totpCode || undefined);
+      await login(username, password, totpCode || undefined);
       const dest =
-        loggedIn.role === 'ADMIN'
-          ? '/admin'
-          : nextPath.startsWith('/') && !nextPath.startsWith('//')
-            ? nextPath
-            : '/trade';
+        nextPath.startsWith('/') && !nextPath.startsWith('//')
+          ? nextPath
+          : '/trade';
       router.push(dest);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Login failed';
@@ -97,6 +124,14 @@ export default function LoginPage() {
 
   const termsBody =
     'By using NEXORA you agree to trade at your own risk within platform rules, complete KYC when required, and not engage in fraud or money laundering. NEXORA provides escrow tooling but is not responsible for off-platform payments. Service may be restricted by jurisdiction.';
+
+  if (authLoading || tgBusy || (isTelegram && !error)) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-[#07090F] text-nexora-muted text-sm">
+        {isTelegram ? 'Вход через Telegram…' : 'Загрузка…'}
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col bg-[#0a0a0f] text-white">

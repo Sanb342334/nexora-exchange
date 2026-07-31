@@ -1,40 +1,46 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { LayoutGrid, Handshake, Wallet, MessageCircle, Megaphone } from 'lucide-react';
-import { useLocale } from '@/lib/i18n/locale-context';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { CandlestickChart, Wallet, LifeBuoy, Landmark, ArrowUpFromLine } from 'lucide-react';
 
 const items = [
-  { href: '/trade', icon: LayoutGrid, key: 'mobileMarket' as const },
-  { href: '/deals', icon: Handshake, key: 'mobileDeals' as const },
-  { href: '/ads', icon: Megaphone, key: 'mobileAds' as const },
-  { href: '/wallet', icon: Wallet, key: 'mobileWallet' as const },
-  { href: '/messages', icon: MessageCircle, key: 'mobileChat' as const },
+  { href: '/trade', icon: CandlestickChart, label: 'Торговля' },
+  { href: '/deposit', icon: Landmark, label: 'Депозит' },
+  { href: '/cabinet?tab=withdraw', icon: ArrowUpFromLine, label: 'Вывод' },
+  { href: '/cabinet', icon: Wallet, label: 'Кабинет' },
+  { href: '/support', icon: LifeBuoy, label: 'Чат' },
 ];
 
 export function MobileNav() {
   const pathname = usePathname();
-  const { t } = useLocale();
-  const shell = t.app.shell;
+  const search = useSearchParams();
+  const isWithdrawTab = search.get('tab') === 'withdraw';
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-nexora-border bg-nexora-surface/95 backdrop-blur-xl lg:hidden">
-      <div className="flex items-center justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {items.map(({ href, icon: Icon, key }) => {
-          const active = href === '/trade'
-            ? pathname === '/trade' || pathname.startsWith('/trade/')
-            : pathname.startsWith(href);
+    <nav className="fixed bottom-0 left-0 right-0 z-[60] border-t border-nexora-border bg-[#0c1018]/98 backdrop-blur-xl lg:hidden pb-[env(safe-area-inset-bottom)]">
+      <div className="flex items-center justify-around py-1.5">
+        {items.map(({ href, icon: Icon, label }) => {
+          const path = href.split('?')[0];
+          const active =
+            path === '/trade'
+              ? pathname.startsWith('/trade') || pathname.startsWith('/binary')
+              : href.includes('tab=withdraw')
+                ? pathname.startsWith('/cabinet') && isWithdrawTab
+                : path === '/cabinet'
+                  ? pathname.startsWith('/cabinet') && !isWithdrawTab
+                  : pathname === path || pathname.startsWith(path + '/');
           return (
             <Link
               key={href}
               href={href}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-w-[56px] ${
+              prefetch
+              className={`flex flex-col items-center gap-0.5 px-1.5 py-1.5 min-w-[56px] min-h-[44px] justify-center touch-manipulation active:opacity-70 ${
                 active ? 'text-nexora-neon' : 'text-nexora-muted'
               }`}
             >
-              <Icon size={20} strokeWidth={active ? 2.5 : 1.75} />
-              <span className="text-[10px] font-medium">{shell[key]}</span>
+              <Icon size={18} strokeWidth={active ? 2.5 : 1.75} />
+              <span className="text-[9px] font-medium leading-none">{label}</span>
             </Link>
           );
         })}

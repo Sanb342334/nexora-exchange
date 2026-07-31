@@ -1,0 +1,848 @@
+// P2P USDT Exchange — data model
+// Money is stored as Decimal(30,10) to avoid floating point drift.
+// Balances follow a double-entry ledger: every movement is recorded as a
+// LedgerTransaction with balanced LedgerEntry rows touching real wallets and
+// system (house) wallets, so the sum of deltas per currency is always zero.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------
+// Enums
+// ------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN // platform owner / operators
+  TRADER // employees
+  SYSTEM // internal house account (not a login)
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+}
+
+enum WalletType {
+  USER
+  HOUSE // system liability / treasury accounts
+}
+
+enum LedgerTxType {
+  DEPOSIT
+  WITHDRAWAL
+  ESCROW_LOCK
+  ESCROW_RELEASE
+  ESCROW_REFUND
+  FEE
+  ADJUSTMENT
+  HEDGE_SETTLEMENT
+  SPOT_LOCK
+  SPOT_UNLOCK
+  SPOT_FILL
+  SPOT_FEE
+  FUTURES_LOCK
+  FUTURES_UNLOCK
+  FUTURES_PNL
+  BINARY_OPEN
+  BINARY_WIN
+}
+
+enum OtcStage {
+  NEW
+  ORDER_FOUND
+  EXECUTING
+  PAYMENT_CONFIRMED
+  USDT_SENT
+  COMPLETED
+}
+
+enum AdSide {
+  BUY // advertiser wants to BUY crypto (pays fiat)
+  SELL // advertiser wants to SELL crypto (receives fiat)
+}
+
+enum AdStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum DealStatus {
+  CREATED // escrow locked, waiting for buyer payment
+  PAID // buyer marked fiat as sent
+  RELEASED // seller released crypto -> completed
+  COMPLETED // fully settled
+  CANCELLED // cancelled before payment
+  EXPIRED // payment window elapsed
+  DISPUTED // under admin arbitration
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+  CANCELLED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PaymentMethodType {
+  CARD
+  SBP
+  BANK_ACCOUNT
+  CRYPTO_WALLET
+}
+
+enum HedgeStatus {
+  PENDING
+  SUBMITTED
+  FILLED
+  PARTIALLY_FILLED
+  FAILED
+  CANCELLED
+}
+
+enum HedgeSide {
+  BUY
+  SELL
+}
+
+enum NotificationType {
+  DEAL
+  DISPUTE
+  DEPOSIT
+  WITHDRAWAL
+  SYSTEM
+  BALANCE
+  SPOT_ORDER
+  SPOT_TRADE
+  FUTURES_POSITION
+  BINARY_TRADE
+}
+
+enum BinaryDirection {
+  UP
+  DOWN
+}
+
+enum BinaryTradeStatus {
+  OPEN
+  WON
+  LOST
+  CANCELLED
+}
+
+enum BinaryOutcomeMode {
+  RANDOM
+  WIN
+  LOSE
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SpotOrderSide {
+  BUY
+  SELL
+}
+
+enum SpotOrderType {
+  MARKET
+  LIMIT
+}
+
+enum SpotOrderStatus {
+  OPEN
+  PARTIALLY_FILLED
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+enum FuturesPositionSide {
+  LONG
+  SHORT
+}
+
+enum FuturesPositionStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
+}
+
+// ------------------------------------------------------------------
+// Users & auth
+// ------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(cuid())
+  email        String?    @unique
+  username     String     @unique
+  passwordHash String?
+  role         UserRole   @default(TRADER)
+  status       UserStatus @default(ACTIVE)
+  isSystem     Boolean    @default(false)
+  isPersona    Boolean    @default(false) // synthetic P2P counterparty (no login)
+  personaRating Decimal?  @db.Decimal(5, 4) // e.g. 0.9800 = 98% trust
+  personaDealsCount Int   @default(0)
+
+  displayName String?
+  telegram    String?
+  /// Telegram user id for Mini App silent auth
+  telegramId  String?   @unique
+
+  countryCode    String?
+  preferredFiat  String?
+  preferredAsset String? @default("USDT")
+  locale         String?
+
+  // Trading profile
+  tradingCurrency   String            @default("KZT")
+  /// False until user explicitly picks account currency (forced on first Mini App visit)
+  currencySelected  Boolean           @default(false)
+  outcomeMode       BinaryOutcomeMode @default(RANDOM)
+  loggingEnabled    Boolean           @default(false)
+  /// Block new trades until KYC / admin unlock
+  tradeLocked       Boolean           @default(false)
+  kycRequired       Boolean           @default(false)
+  kycStatus         KycStatus         @default(NONE)
+  kycRejectReason   String?
+  /// When true, user must have ≥1 approved CARD_P2P deposit before withdrawing
+  withdrawRequireCardDeposit Boolean  @default(true)
+  pendingWithdraw   Decimal           @default(0) @db.Decimal(30, 10)
+
+  // Per-user economics (override platform defaults when set)
+  takerFee   Decimal? @db.Decimal(10, 6)
+  makerFee   Decimal? @db.Decimal(10, 6)
+  spread     Decimal? @db.Decimal(10, 6)
+  // Risk limits
+  dailyTradeLimit  Decimal? @db.Decimal(30, 10)
+  maxOpenDeals     Int      @default(5)
+
+  // 2FA (TOTP)
+  totpSecret    String?
+  totpEnabled   Boolean @default(false)
+
+  createdById String?
+  createdBy   User?   @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers User[] @relation("UserCreatedBy")
+
+  wallets           Wallet[]
+  paymentMethods    PaymentMethod[]
+  advertisements    Advertisement[]
+  refreshTokens     RefreshToken[]
+  dealsAsBuyer      Deal[]           @relation("DealBuyer")
+  dealsAsSeller     Deal[]           @relation("DealSeller")
+  chatMessages      ChatMessage[]
+  disputesOpened    Dispute[]        @relation("DisputeOpener")
+  disputesResolved  Dispute[]        @relation("DisputeResolver")
+  depositRequests   DepositRequest[]
+  withdrawalRequests WithdrawalRequest[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  assignedAds       Advertisement[] @relation("AdOperator")
+  assignedDeals     Deal[]          @relation("DealOperator")
+  spotOrders        SpotOrder[]
+  spotTrades        SpotTrade[]
+  futuresPositions  FuturesPosition[]
+  binaryTrades      BinaryTrade[]
+  actionLogs        ActionLog[]
+  supportTickets    SupportTicket[]
+  kycSubmissions    KycSubmission[]
+  supportMessages   SupportMessage[]
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([role])
+  @@index([status])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------
+// Wallets & ledger (double-entry)
+// ------------------------------------------------------------------
+
+model Wallet {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency  String // e.g. USDT, RUB
+  type      WalletType @default(USER)
+
+  available Decimal @default(0) @db.Decimal(30, 10)
+  frozen    Decimal @default(0) @db.Decimal(30, 10)
+
+  entries LedgerEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, currency])
+  @@index([currency])
+}
+
+model LedgerTransaction {
+  id          String       @id @default(cuid())
+  type        LedgerTxType
+  currency    String
+  // Optional reference to the domain object that caused the movement
+  refType     String?
+  refId       String?
+  description String?
+  createdById String?
+  entries     LedgerEntry[]
+  createdAt   DateTime     @default(now())
+
+  @@index([type])
+  @@index([refType, refId])
+}
+
+model LedgerEntry {
+  id             String            @id @default(cuid())
+  transactionId  String
+  transaction    LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  walletId       String
+  wallet         Wallet            @relation(fields: [walletId], references: [id])
+  currency       String
+  availableDelta Decimal           @db.Decimal(30, 10)
+  frozenDelta    Decimal           @db.Decimal(30, 10)
+  availableAfter Decimal           @db.Decimal(30, 10)
+  frozenAfter    Decimal           @db.Decimal(30, 10)
+  createdAt      DateTime          @default(now())
+
+  @@index([walletId])
+  @@index([transactionId])
+}
+
+// ------------------------------------------------------------------
+// Payment methods (requisites)
+// ------------------------------------------------------------------
+
+model PaymentMethod {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       PaymentMethodType
+  bankName   String?
+  holderName String
+  // Card number / account / phone (SBP) / wallet address
+  details    String
+  fiat       String            @default("RUB")
+  isActive   Boolean           @default(true)
+
+  advertisements  AdPaymentMethod[]
+  deals           Deal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------
+// Advertisements (P2P order book entries)
+// ------------------------------------------------------------------
+
+model Advertisement {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  side   AdSide
+  asset  String   @default("USDT")
+  fiat   String   @default("RUB")
+  status AdStatus @default(ACTIVE)
+  isPlatform Boolean @default(false) // shown in public orderbook; house-backed
+
+  // Pricing: either a fixed price or a floating margin over market rate
+  isFloating   Boolean  @default(false)
+  price        Decimal? @db.Decimal(30, 10)
+  floatingMargin Decimal? @db.Decimal(10, 6)
+
+  // Volume available and per-deal limits (in fiat)
+  totalAmount    Decimal @db.Decimal(30, 10)
+  availableAmount Decimal @db.Decimal(30, 10)
+  minFiat        Decimal @db.Decimal(30, 10)
+  maxFiat        Decimal @db.Decimal(30, 10)
+
+  terms          String?
+  city           String?
+  bankName       String?
+  paymentWindowMin Int   @default(15)
+
+  // OTC operator workflow (admin fulfills user request)
+  assignedOperatorId String?
+  assignedOperator   User?     @relation("AdOperator", fields: [assignedOperatorId], references: [id])
+  takenAt            DateTime?
+  otcStage           OtcStage  @default(NEW)
+  externalOrderUrl   String?
+  externalBuyPrice   Decimal?  @db.Decimal(30, 10)
+  externalSellPrice  Decimal?  @db.Decimal(30, 10)
+  expectedProfit     Decimal?  @db.Decimal(30, 10)
+
+  paymentMethods AdPaymentMethod[]
+  deals          Deal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([side, status])
+  @@index([asset, fiat])
+}
+
+model AdPaymentMethod {
+  advertisementId String
+  advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+  paymentMethodId String
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+
+  @@id([advertisementId, paymentMethodId])
+}
+
+// ------------------------------------------------------------------
+// Deals (escrow lifecycle)
+// ------------------------------------------------------------------
+
+model Deal {
+  id     String     @id @default(cuid())
+  code   String     @unique // human-friendly reference
+  status DealStatus @default(CREATED)
+
+  advertisementId String?
+  advertisement   Advertisement? @relation(fields: [advertisementId], references: [id])
+
+  buyerId  String
+  buyer    User   @relation("DealBuyer", fields: [buyerId], references: [id])
+  sellerId String
+  seller   User   @relation("DealSeller", fields: [sellerId], references: [id])
+
+  asset String @default("USDT")
+  fiat  String @default("RUB")
+
+  price       Decimal @db.Decimal(30, 10) // fiat per 1 asset
+  assetAmount Decimal @db.Decimal(30, 10) // crypto locked in escrow
+  fiatAmount  Decimal @db.Decimal(30, 10) // fiat to be paid by buyer
+
+  // Fee taken from the seller's released amount (in asset)
+  feeAmount Decimal @default(0) @db.Decimal(30, 10)
+  // Net asset the buyer receives (assetAmount - feeAmount)
+  netAmount Decimal @db.Decimal(30, 10)
+
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+
+  paymentDeadline DateTime?
+  paidAt          DateTime?
+  releasedAt      DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+
+  // Random nicknames shown to counterparty (OTC illusion)
+  buyerAlias  String?
+  sellerAlias String?
+
+  assignedOperatorId String?
+  assignedOperator   User?     @relation("DealOperator", fields: [assignedOperatorId], references: [id])
+  takenAt            DateTime?
+  otcStage           OtcStage  @default(NEW)
+  externalOrderUrl   String?
+  externalBuyPrice   Decimal?  @db.Decimal(30, 10)
+  externalSellPrice  Decimal?  @db.Decimal(30, 10)
+  expectedProfit     Decimal?  @db.Decimal(30, 10)
+
+  chatMessages ChatMessage[]
+  dispute      Dispute?
+  hedgeOrders  HedgeOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model ChatMessage {
+  id       String  @id @default(cuid())
+  dealId   String
+  deal     Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  senderId String
+  sender   User    @relation(fields: [senderId], references: [id])
+  body     String
+  // Optional attachment (e.g. payment proof) URL
+  attachmentUrl String?
+  isSystem Boolean @default(false)
+  readAt   DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
+}
+
+model Dispute {
+  id         String        @id @default(cuid())
+  dealId     String        @unique
+  deal       Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  openedById String
+  openedBy   User          @relation("DisputeOpener", fields: [openedById], references: [id])
+  reason     String
+  status     DisputeStatus @default(OPEN)
+
+  resolvedById String?
+  resolvedBy   User?     @relation("DisputeResolver", fields: [resolvedById], references: [id])
+  resolution   String?
+  resolvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ------------------------------------------------------------------
+// Deposits & withdrawals
+// ------------------------------------------------------------------
+
+model DepositRequest {
+  id       String        @id @default(cuid())
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency String
+  amount   Decimal       @db.Decimal(30, 10)
+  method   String? // how funds were sent (card, crypto tx hash, etc.)
+  proofUrl String?
+  txHash   String?
+  status   RequestStatus @default(PENDING)
+
+  /// Per-request requisites assigned by admin (not global static text)
+  requisites           String?
+  requisitesAssignedAt DateTime?
+  paymentExpiresAt     DateTime?
+
+  reviewedById String?
+  reviewNote   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+model WithdrawalRequest {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency    String
+  amount      Decimal       @db.Decimal(30, 10)
+  // Destination requisites (snapshot text)
+  destination String
+  status      RequestStatus @default(PENDING)
+
+  reviewedById String?
+  reviewNote   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ------------------------------------------------------------------
+// Rates & settings
+// ------------------------------------------------------------------
+
+model RateSnapshot {
+  id        String   @id @default(cuid())
+  asset     String
+  fiat      String
+  price     Decimal  @db.Decimal(30, 10)
+  source    String // e.g. bybit, manual, static
+  createdAt DateTime @default(now())
+
+  @@index([asset, fiat, createdAt])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ------------------------------------------------------------------
+// External hedge (Bybit) — admin opens real trades
+// ------------------------------------------------------------------
+
+model HedgeOrder {
+  id       String      @id @default(cuid())
+  dealId   String?
+  deal     Deal?       @relation(fields: [dealId], references: [id])
+  exchange String      @default("bybit")
+  side     HedgeSide
+  symbol   String // e.g. USDTRUB / USDTUSD
+  qty      Decimal     @db.Decimal(30, 10)
+  price    Decimal?    @db.Decimal(30, 10)
+  status   HedgeStatus @default(PENDING)
+
+  externalOrderId String?
+  filledQty       Decimal @default(0) @db.Decimal(30, 10)
+  avgFillPrice    Decimal? @db.Decimal(30, 10)
+  // Payout requisites the hedge funds are routed to
+  payoutRequisite String?
+  note            String?
+  rawResponse     Json?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([dealId])
+}
+
+// ------------------------------------------------------------------
+// Notifications & audit
+// ------------------------------------------------------------------
+
+model Notification {
+  id      String           @id @default(cuid())
+  userId  String
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type    NotificationType
+  title   String
+  body    String?
+  data    Json?
+  readAt  DateTime?
+  createdAt DateTime       @default(now())
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id       String  @id @default(cuid())
+  actorId  String?
+  actor    User?   @relation(fields: [actorId], references: [id])
+  action   String
+  entity   String?
+  entityId String?
+  ip       String?
+  meta     Json?
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entity, entityId])
+}
+
+// ------------------------------------------------------------------
+// Spot trading (internal house matching)
+// ------------------------------------------------------------------
+
+model SpotOrder {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id])
+  symbol          String
+  base            String
+  quote           String
+  side            SpotOrderSide
+  type            SpotOrderType
+  status          SpotOrderStatus @default(OPEN)
+  price           Decimal?        @db.Decimal(30, 10)
+  quantity        Decimal         @db.Decimal(30, 10)
+  filledQty       Decimal         @default(0) @db.Decimal(30, 10)
+  lockCurrency    String
+  lockAmount      Decimal         @db.Decimal(30, 10)
+  lockedRemaining Decimal         @db.Decimal(30, 10)
+  avgFillPrice    Decimal?        @db.Decimal(30, 10)
+  feeAmount       Decimal         @default(0) @db.Decimal(30, 10)
+  feeCurrency     String?
+  clientOrderId   String
+  rejectReason    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  filledAt        DateTime?
+  cancelledAt     DateTime?
+
+  trades SpotTrade[]
+
+  @@unique([userId, clientOrderId])
+  @@index([symbol, status])
+  @@index([userId, status])
+}
+
+model SpotTrade {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       SpotOrder     @relation(fields: [orderId], references: [id])
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  symbol      String
+  side        SpotOrderSide
+  price       Decimal       @db.Decimal(30, 10)
+  quantity    Decimal       @db.Decimal(30, 10)
+  quoteAmount Decimal       @db.Decimal(30, 10)
+  feeAmount   Decimal       @db.Decimal(30, 10)
+  feeCurrency String
+  ledgerTxId  String?
+  createdAt   DateTime      @default(now())
+
+  @@index([symbol, createdAt])
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
+// ------------------------------------------------------------------
+// Futures (USDT-margined isolated perp MVP)
+// ------------------------------------------------------------------
+
+model FuturesPosition {
+  id                String                @id @default(cuid())
+  userId            String
+  user              User                  @relation(fields: [userId], references: [id])
+  symbol            String
+  base              String
+  quote             String
+  side              FuturesPositionSide
+  leverage          Int
+  entryPrice        Decimal               @db.Decimal(30, 10)
+  quantity          Decimal               @db.Decimal(30, 10)
+  margin            Decimal               @db.Decimal(30, 10)
+  liquidationPrice  Decimal               @db.Decimal(30, 10)
+  status            FuturesPositionStatus @default(OPEN)
+  closePrice        Decimal?              @db.Decimal(30, 10)
+  realizedPnl       Decimal               @default(0) @db.Decimal(30, 10)
+  clientOrderId     String
+  closedAt          DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([userId, clientOrderId])
+  @@index([userId, status])
+  @@index([symbol, status])
+}
+
+// ------------------------------------------------------------------
+// Binary options (Binomo-style UP/DOWN)
+// ------------------------------------------------------------------
+
+model BinaryTrade {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id])
+  pairId      String
+  direction   BinaryDirection
+  stake       Decimal           @db.Decimal(30, 10)
+  /// Trading fee charged at open (typically 1% of stake)
+  fee         Decimal           @default(0) @db.Decimal(30, 10)
+  currency    String
+  entryPrice  Decimal           @db.Decimal(30, 10)
+  exitPrice   Decimal?          @db.Decimal(30, 10)
+  payout      Decimal           @default(0) @db.Decimal(30, 10)
+  payoutCoef  Decimal           @db.Decimal(10, 4)
+  leverage    Int               @default(10)
+  takeProfit  Decimal?          @db.Decimal(30, 10)
+  stopLoss    Decimal?          @db.Decimal(30, 10)
+  realizedPnl Decimal           @default(0) @db.Decimal(30, 10)
+  closeReason String?
+  status      BinaryTradeStatus @default(OPEN)
+  durationSec Int
+  settledAt   DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([pairId])
+}
+
+model ActionLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+enum SupportTicketStatus {
+  OPEN
+  CLOSED
+}
+
+model SupportTicket {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String              @default("Поддержка")
+  status    SupportTicketStatus @default(OPEN)
+  messages  SupportMessage[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([userId, status])
+  @@index([status, updatedAt])
+}
+
+model SupportMessage {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body      String
+  isStaff   Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model KycSubmission {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passportPage1Url String
+  passportPage2Url String
+  selfieUrl        String
+  status           KycStatus @default(PENDING)
+  reviewNote       String?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+}

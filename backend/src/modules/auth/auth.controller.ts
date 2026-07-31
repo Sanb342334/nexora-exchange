@@ -2,7 +2,14 @@ import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, Enable2faDto, LoginDto, RefreshDto, RegisterDto } from './dto/auth.dto';
+import {
+  ChangePasswordDto,
+  Enable2faDto,
+  LoginDto,
+  RefreshDto,
+  RegisterDto,
+  TelegramAuthDto,
+} from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 
@@ -26,6 +33,14 @@ export class AuthController {
   @Post('register')
   register(@Body() dto: RegisterDto, @Req() req: Request) {
     return this.auth.register(dto, this.meta(req));
+  }
+
+  /** Silent login / upsert for Telegram Mini App (initData). */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('telegram')
+  telegram(@Body() dto: TelegramAuthDto, @Req() req: Request) {
+    return this.auth.loginWithTelegram(dto.initData, this.meta(req));
   }
 
   @Public()

@@ -33,6 +33,12 @@ export class Enable2faDto {
   totpCode!: string;
 }
 
+export class TelegramAuthDto {
+  @IsString()
+  @MinLength(10)
+  initData!: string;
+}
+
 export class RegisterDto {
   @IsString()
   @MinLength(3)

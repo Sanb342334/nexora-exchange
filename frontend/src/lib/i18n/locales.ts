@@ -65,7 +65,7 @@ export const LOCALES: Locale[] = [
   { id: 'zh-TW', label: '繁體中文' },
 ];
 
-export const DEFAULT_LOCALE: LocaleId = 'en';
+export const DEFAULT_LOCALE: LocaleId = 'ru';
 
 export function isLocaleId(value: string): value is LocaleId {
   return LOCALES.some((l) => l.id === value);

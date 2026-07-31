@@ -1,0 +1,22 @@
+# Motion system — NEXORA
+
+## Principles
+- Purpose over decoration: motion clarifies hierarchy and state, not noise.
+- Prefer opacity + translateY (8–16px) and soft scale (0.98→1).
+- Respect `prefers-reduced-motion`.
+
+## Tokens
+| Token | Value |
+|-------|-------|
+| duration-fast | 150ms |
+| duration-base | 220ms |
+| duration-slow | 360ms |
+| ease-out | cubic-bezier(0.16, 1, 0.3, 1) |
+| page-enter | opacity 0→1, y 12→0, 220ms |
+| list-stagger | 40ms between items |
+| modal | scale 0.98→1 + fade, 220ms |
+
+## Usage
+- `PageMotion` / `staggerContainer` / `tableRow` in `frontend/src/lib/motion.ts`
+- Shell nav active underline: 200ms width
+- Toast enter/exit: 180ms slide from top-right

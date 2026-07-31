@@ -15,12 +15,17 @@ const WS_URL = resolveWsUrl();
 let socket: Socket | null = null;
 
 export function getSocket(): Socket {
+  const token = tokenStore.access;
   if (!socket) {
     socket = io(`${WS_URL}/ws`, {
-      transports: ['websocket'],
-      auth: { token: tokenStore.access },
+      transports: ['websocket', 'polling'],
+      auth: { token },
       autoConnect: true,
     });
+  } else if (token) {
+    // Refresh token on existing socket (Telegram silent auth)
+    (socket as Socket).auth = { token };
+    if (!socket.connected) socket.connect();
   }
   return socket;
 }

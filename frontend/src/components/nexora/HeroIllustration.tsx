@@ -76,16 +76,26 @@ function HeroIllustrationInner({
       ? `relative mx-auto w-full max-w-[720px] ${className}`
       : `pointer-events-none absolute right-[-4%] top-1/2 z-[1] hidden w-[60%] max-w-[720px] -translate-y-1/2 lg:block ${className}`;
 
-  const orbitScale = isTrade ? 0.78 : isLogin ? 0.92 : 1;
-  const orbitCenter = isTrade ? '58%' : isLogin ? '68%' : '56%';
-  const ringRadii = isTrade ? [96, 118, 140] : isLogin ? [112, 132, 152] : [132, 158, 182];
+  const orbitScale = simple ? 0.42 : isTrade ? 0.78 : isLogin ? 0.92 : 1;
+  const orbitCenter = simple ? '50%' : isTrade ? '58%' : isLogin ? '68%' : '56%';
+  const ringRadii = simple
+    ? [48, 62, 76]
+    : isTrade
+      ? [96, 118, 140]
+      : isLogin
+        ? [112, 132, 152]
+        : [132, 158, 182];
 
   return (
-    <div className={wrapperClass} aria-hidden>
-      <div className={`relative w-full overflow-hidden ${isLogin ? 'aspect-[5/4]' : 'aspect-[16/10]'}`}>
+    <div className={`${wrapperClass} pointer-events-none`} aria-hidden>
+      <div
+        className={`relative w-full overflow-hidden ${
+          simple ? 'h-full aspect-auto' : isLogin ? 'aspect-[5/4]' : 'aspect-[16/10]'
+        }`}
+      >
         <motion.div
           className="absolute left-[54%] h-[45%] w-[62%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#7B61FF] blur-[80px]"
-          style={{ top: isLogin ? '72%' : '58%' }}
+          style={{ top: simple ? '50%' : isLogin ? '72%' : '58%' }}
           animate={reduced ? { opacity: 0.3 } : { opacity: [0.2, 0.45, 0.2] }}
           transition={reduced ? undefined : { repeat: Infinity, duration: 3.6, ease: 'easeInOut' }}
         />

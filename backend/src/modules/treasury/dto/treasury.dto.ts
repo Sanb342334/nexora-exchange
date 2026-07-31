@@ -8,9 +8,15 @@ export class CreateDepositDto {
   @IsPositive()
   amount!: number;
 
+  /** CARD_P2P | CRYPTO */
   @IsOptional()
   @IsString()
   method?: string;
+
+  /** Crypto network id from /treasury/deposit-methods (e.g. usdt_trc20) */
+  @IsOptional()
+  @IsString()
+  cryptoNetwork?: string;
 
   @IsOptional()
   @IsString()
@@ -29,8 +35,21 @@ export class CreateWithdrawalDto {
   @IsPositive()
   amount!: number;
 
+  /** CARD | CRYPTO */
+  @IsOptional()
+  @IsString()
+  method?: string;
+
   @IsString()
   destination!: string;
+
+  @IsOptional()
+  @IsString()
+  holderName?: string;
+
+  @IsOptional()
+  @IsString()
+  comment?: string;
 }
 
 export class ReviewDto {

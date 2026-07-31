@@ -1,90 +1,164 @@
 'use client';
 
-import { motion } from 'framer-motion';
-import { PageHeader, Card } from '@/components/ui';
-import { PageMotion } from '@/components/nexora/PageMotion';
-import { Headphones, Mail, MessageSquare, Shield, Zap, Lock } from 'lucide-react';
-import { staggerContainer, staggerItem } from '@/lib/motion';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Send } from 'lucide-react';
+import { apiGet, apiPost, ApiError } from '@/lib/api';
+import { reconnectSocket, useSocketEvent } from '@/lib/socket';
+import { useToast } from '@/components/nexora/ToastProvider';
+import { useAuth } from '@/lib/auth';
 
-const contacts = [
-  { icon: Headphones, label: 'Telegram', value: '@nexora_support', color: 'text-blue-400' },
-  { icon: Mail, label: 'Email', value: 'support@nexora.local', color: 'text-purple-400' },
-  { icon: MessageSquare, label: 'Время ответа', value: 'до 15 минут', color: 'text-[#4CAF50]' },
-];
+type Msg = {
+  id: string;
+  body: string;
+  isStaff: boolean;
+  createdAt: string;
+  sender: { id: string; username: string; displayName?: string | null };
+};
 
-const faqs = [
-  {
-    q: 'Как создать заявку на покупку USDT?',
-    a: 'Перейдите в «Мои объявления», укажите курс, объём и банк. Оператор свяжется с вами.',
-  },
-  {
-    q: 'Как работает эскроу?',
-    a: 'USDT блокируется до подтверждения оплаты. Вы защищены на каждом этапе сделки.',
-  },
-  {
-    q: 'Что делать при споре?',
-    a: 'Откройте спор на странице сделки — поддержка решит вопрос в течение 24 часов.',
-  },
-];
-
-const features = [
-  { icon: Shield, title: 'Эскроу-защита', desc: 'Средства заблокированы до завершения' },
-  { icon: Zap, title: 'Быстрые сделки', desc: 'Среднее время — 15 минут' },
-  { icon: Lock, title: 'Шифрование', desc: 'Данные защищены end-to-end' },
-];
+type Ticket = {
+  id: string;
+  status: string;
+  messages: Msg[];
+};
 
 export default function SupportPage() {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    const t = await apiGet<Ticket>('/support/ticket');
+    setTicket(t);
+    return t;
+  }, []);
+
+  const mergeMessage = useCallback((incoming: Msg) => {
+    setTicket((prev) => {
+      if (!prev) return prev;
+      if (prev.messages.some((m) => m.id === incoming.id)) return prev;
+      return { ...prev, messages: [...prev.messages, incoming] };
+    });
+  }, []);
+
+  useEffect(() => {
+    reconnectSocket();
+    load().catch(() => {});
+  }, [load]);
+
+  // Polling fallback — Mini App / ngrok sockets are flaky
+  useEffect(() => {
+    const t = setInterval(() => {
+      load().catch(() => {});
+    }, 2500);
+    return () => clearInterval(t);
+  }, [load]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [ticket?.messages?.length]);
+
+  useSocketEvent('support:message', (payload: { ticketId?: string; message?: Msg }) => {
+    if (payload?.message?.id) {
+      mergeMessage(payload.message);
+    } else {
+      load().catch(() => {});
+    }
+  });
+
+  useSocketEvent('support:reply', (payload: { message?: Msg }) => {
+    if (payload?.message?.id) mergeMessage(payload.message);
+    else load().catch(() => {});
+  });
+
+  useSocketEvent('support:cleared', () => {
+    setTicket(null);
+    load().catch(() => {});
+  });
+
+  useSocketEvent('notification', (n: { type?: string; title?: string }) => {
+    if (n?.type === 'SYSTEM' || /поддержк/i.test(n?.title || '')) {
+      load().catch(() => {});
+    }
+  });
+
+  const send = async () => {
+    if (!text.trim()) return;
+    setSending(true);
+    try {
+      const msg = await apiPost<Msg>('/support/messages', { body: text.trim() });
+      setText('');
+      if (msg?.id) mergeMessage(msg);
+      await load();
+    } catch (err) {
+      toast('error', err instanceof ApiError ? err.message : 'Не удалось отправить');
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
-    <PageMotion className="max-w-3xl space-y-6">
-      <PageHeader title="Поддержка" subtitle="Мы на связи 24/7 — поможем с любой сделкой" />
+    <div className="max-w-2xl mx-auto flex flex-col h-[calc(100dvh-140px)] min-h-[480px]">
+      <div className="mb-3">
+        <h1 className="font-display text-2xl font-bold text-white">Техподдержка</h1>
+        <p className="text-sm text-nexora-muted">Чат с операторами платформы</p>
+      </div>
 
-      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="grid gap-4 sm:grid-cols-3">
-        {features.map(({ icon: Icon, title, desc }) => (
-          <motion.div
-            key={title}
-            variants={staggerItem}
-            whileHover={{ y: -4, boxShadow: '0 0 24px rgba(123,97,255,0.12)' }}
-            className="rounded-[18px] border border-white/[0.07] bg-nexora-card p-4 text-center"
-          >
-            <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-nexora-accent/15">
-              <Icon size={20} className="text-nexora-accent" />
-            </div>
-            <div className="font-display text-sm font-bold text-white">{title}</div>
-            <div className="mt-1 text-xs text-nexora-muted">{desc}</div>
-          </motion.div>
-        ))}
-      </motion.div>
-
-      <Card title="Связаться с нами">
-        <div className="space-y-3">
-          {contacts.map(({ icon: Icon, label, value, color }) => (
-            <motion.div
-              key={label}
-              whileHover={{ x: 4 }}
-              className="flex items-center gap-4 rounded-[14px] border border-white/[0.05] bg-white/[0.02] p-4"
-            >
-              <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-white/[0.04] ${color}`}>
-                <Icon size={20} />
+      <div className="flex-1 glass-card flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {!ticket?.messages?.length && (
+            <p className="text-sm text-nexora-muted text-center py-10">
+              Напишите сообщение — оператор ответит в этом чате
+            </p>
+          )}
+          {ticket?.messages?.map((m) => {
+            const mine = m.sender.id === user?.id && !m.isStaff;
+            const staffLabel = m.isStaff
+              ? (m.sender.displayName || m.sender.username || 'Оператор').trim().split(/\s+/)[0]
+              : null;
+            return (
+              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm ${
+                    mine
+                      ? 'bg-nexora-accent/25 text-white rounded-br-md'
+                      : 'bg-white/[0.06] text-nexora-text rounded-bl-md'
+                  }`}
+                >
+                  {staffLabel && !mine && (
+                    <div className="text-[11px] font-semibold text-nexora-neon mb-1">{staffLabel}</div>
+                  )}
+                  <div className="whitespace-pre-wrap break-words">{m.body}</div>
+                  <div className="text-[10px] text-nexora-muted mt-1">
+                    {new Date(m.createdAt).toLocaleTimeString()}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-nexora-muted">{label}</div>
-                <div className="font-semibold text-white">{value}</div>
-              </div>
-            </motion.div>
-          ))}
+            );
+          })}
+          <div ref={bottomRef} />
         </div>
-      </Card>
 
-      <Card title="Частые вопросы">
-        <div className="space-y-4">
-          {faqs.map((f) => (
-            <div key={f.q} className="rounded-[14px] border border-white/[0.05] bg-white/[0.02] p-4">
-              <div className="font-semibold text-white text-sm">{f.q}</div>
-              <p className="mt-2 text-sm text-nexora-muted leading-relaxed">{f.a}</p>
-            </div>
-          ))}
+        <div className="border-t border-white/[0.06] p-3 flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder="Ваше сообщение…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button type="button" className="btn-primary px-4" disabled={sending} onClick={send}>
+            <Send size={16} />
+          </button>
         </div>
-      </Card>
-    </PageMotion>
+      </div>
+    </div>
   );
 }

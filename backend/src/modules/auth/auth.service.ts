@@ -7,7 +7,9 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { isAllowedCountry, isFiatAllowedForCountry } from '../../common/countries';
+import { parseAndValidateTelegramInitData } from '../../common/telegram-webapp';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TelegramAdminService } from '../platform/telegram-admin.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TokenService } from './token.service';
 import { ChangePasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
@@ -19,6 +21,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly wallets: WalletsService,
     private readonly config: ConfigService,
+    private readonly tgAdmin: TelegramAdminService,
   ) {}
 
   static hashPassword(password: string): Promise<string> {
@@ -26,7 +29,15 @@ export class AuthService {
   }
 
   async validateAndLogin(dto: LoginDto, meta?: { userAgent?: string; ip?: string }) {
-    const user = await this.prisma.user.findUnique({ where: { username: dto.username } });
+    const login = dto.username.trim();
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: login },
+          { email: { equals: login, mode: 'insensitive' } },
+        ],
+      },
+    });
     if (!user || !user.passwordHash) {
       throw new UnauthorizedException('Неверный логин или пароль');
     }
@@ -89,7 +100,9 @@ export class AuthService {
         countryCode: dto.countryCode,
         preferredFiat: dto.preferredFiat,
         preferredAsset: baseAsset,
-        locale: dto.locale ?? 'en',
+        locale: dto.locale ?? 'ru',
+        tradingCurrency: dto.preferredFiat,
+        currencySelected: true,
       },
     });
 
@@ -101,6 +114,87 @@ export class AuthService {
       meta,
     );
     return { ...pair, user: this.sanitize(user) };
+  }
+
+  /**
+   * Telegram Mini App: validate initData, find-or-create user by telegramId,
+   * issue JWT. Balance / history persist across Mini App sessions.
+   */
+  async loginWithTelegram(initData: string, meta?: { userAgent?: string; ip?: string }) {
+    const botToken =
+      this.config.get<string>('TELEGRAM_BOT_TOKEN') || process.env.TELEGRAM_BOT_TOKEN || '';
+    let parsed;
+    try {
+      parsed = parseAndValidateTelegramInitData(initData, botToken);
+    } catch (e) {
+      const code = e instanceof Error ? e.message : 'invalid';
+      if (code === 'bot_token_missing') {
+        throw new BadRequestException('TELEGRAM_BOT_TOKEN не задан на сервере');
+      }
+      throw new UnauthorizedException('Недействительные данные Telegram');
+    }
+
+    const tg = parsed.user;
+    const telegramId = String(tg.id);
+    const displayName =
+      [tg.first_name, tg.last_name].filter(Boolean).join(' ').trim() ||
+      tg.username ||
+      `Telegram ${telegramId}`;
+    const baseAsset = this.config.get<string>('economics.baseAsset') ?? 'USDT';
+    const isTgAdmin = await this.tgAdmin.isAdminTelegramId(telegramId);
+    const role = isTgAdmin ? 'ADMIN' : 'TRADER';
+
+    let user = await this.prisma.user.findUnique({ where: { telegramId } });
+    let isNew = false;
+    if (!user) {
+      isNew = true;
+      const username = `tg_${telegramId}`;
+      user = await this.prisma.user.create({
+        data: {
+          username,
+          passwordHash: null,
+          displayName,
+          telegram: tg.username ? `@${tg.username}` : null,
+          telegramId,
+          role,
+          status: 'ACTIVE',
+          countryCode: 'RU',
+          preferredFiat: 'RUB',
+          preferredAsset: baseAsset,
+          locale: 'ru',
+          tradingCurrency: 'RUB',
+          currencySelected: false,
+          lastLoginAt: new Date(),
+        },
+      });
+      await this.wallets.ensureWallet(user.id, baseAsset);
+      await this.wallets.ensureWallet(user.id, 'RUB');
+      await this.wallets.ensureWallet(user.id, 'KZT');
+    } else {
+      if (user.status === 'BLOCKED') {
+        throw new UnauthorizedException('Аккаунт заблокирован');
+      }
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          lastLoginAt: new Date(),
+          displayName: user.displayName || displayName,
+          telegram: tg.username ? `@${tg.username}` : user.telegram,
+          ...(isTgAdmin && user.role !== 'ADMIN' ? { role: 'ADMIN' } : {}),
+        },
+      });
+    }
+
+    const pair = await this.tokens.issueTokens(
+      { sub: user.id, username: user.username, role: user.role },
+      meta,
+    );
+    return {
+      ...pair,
+      user: this.sanitize(user),
+      isNew,
+      needsCurrency: !user.currencySelected,
+    };
   }
 
   async refresh(refreshToken: string, meta?: { userAgent?: string; ip?: string }) {
@@ -174,6 +268,8 @@ export class AuthService {
     preferredFiat?: string | null;
     preferredAsset?: string | null;
     locale?: string | null;
+    currencySelected?: boolean;
+    kycStatus?: string;
   }) {
     return {
       id: user.id,
@@ -187,6 +283,9 @@ export class AuthService {
       preferredFiat: user.preferredFiat ?? null,
       preferredAsset: user.preferredAsset ?? null,
       locale: user.locale ?? null,
+      needsCurrency: !user.currencySelected,
+      kycStatus: user.kycStatus ?? 'NONE',
+      kycVerified: user.kycStatus === 'APPROVED',
     };
   }
 }

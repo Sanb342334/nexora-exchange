@@ -1,9 +1,0 @@
-app = "borscht-bot"
-primary_region = "sin"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[env]
-  LOG_DIR = "/app/logs"
-  CONFIG_PATH = "/app/config.yaml"

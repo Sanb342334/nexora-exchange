@@ -332,6 +332,103 @@ export class WalletsService {
     );
   }
 
+  /** Binary option: take stake from user to house. */
+  async binaryOpenStake(
+    userId: string,
+    currency: string,
+    stake: Prisma.Decimal.Value,
+    ref: { refId: string; description?: string },
+    tx: Tx,
+  ) {
+    const userWallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    const systemId = await this.getSystemUserId(tx);
+    const houseWallet = await this.ensureWallet(systemId, currency, 'HOUSE', tx);
+    return this.post(
+      [
+        { walletId: userWallet.id, availableDelta: D(stake).negated(), frozenDelta: 0 },
+        { walletId: houseWallet.id, availableDelta: stake, frozenDelta: 0 },
+      ],
+      {
+        type: LedgerTxType.BINARY_OPEN,
+        currency,
+        refType: 'binary_trade',
+        refId: ref.refId,
+        description: ref.description ?? 'Binary stake',
+      },
+      tx,
+    );
+  }
+
+  /** Move available balance from one fiat wallet to another (converted amount). */
+  async convertAvailable(
+    userId: string,
+    fromCurrency: string,
+    toCurrency: string,
+    fromAmount: Prisma.Decimal.Value,
+    toAmount: Prisma.Decimal.Value,
+    tx: Tx,
+  ) {
+    if (D(fromAmount).lte(0) || D(toAmount).lte(0)) return;
+    const systemId = await this.getSystemUserId(tx);
+    const fromW = await this.ensureWallet(userId, fromCurrency, 'USER', tx);
+    const toW = await this.ensureWallet(userId, toCurrency, 'USER', tx);
+    const houseFrom = await this.ensureWallet(systemId, fromCurrency, 'HOUSE', tx);
+    const houseTo = await this.ensureWallet(systemId, toCurrency, 'HOUSE', tx);
+    await this.post(
+      [
+        { walletId: fromW.id, availableDelta: D(fromAmount).negated(), frozenDelta: 0 },
+        { walletId: houseFrom.id, availableDelta: fromAmount, frozenDelta: 0 },
+      ],
+      {
+        type: LedgerTxType.ADJUSTMENT,
+        currency: fromCurrency,
+        refType: 'currency_convert',
+        description: `Convert out ${fromCurrency}→${toCurrency}`,
+      },
+      tx,
+    );
+    await this.post(
+      [
+        { walletId: houseTo.id, availableDelta: D(toAmount).negated(), frozenDelta: 0 },
+        { walletId: toW.id, availableDelta: toAmount, frozenDelta: 0 },
+      ],
+      {
+        type: LedgerTxType.ADJUSTMENT,
+        currency: toCurrency,
+        refType: 'currency_convert',
+        description: `Convert in ${fromCurrency}→${toCurrency}`,
+      },
+      tx,
+    );
+  }
+
+  /** Binary option: credit payout (stake * coef) to user from house. */
+  async binaryCreditPayout(
+    userId: string,
+    currency: string,
+    payout: Prisma.Decimal.Value,
+    ref: { refId: string; description?: string },
+    tx: Tx,
+  ) {
+    const userWallet = await this.ensureWallet(userId, currency, 'USER', tx);
+    const systemId = await this.getSystemUserId(tx);
+    const houseWallet = await this.ensureWallet(systemId, currency, 'HOUSE', tx);
+    return this.post(
+      [
+        { walletId: userWallet.id, availableDelta: payout, frozenDelta: 0 },
+        { walletId: houseWallet.id, availableDelta: D(payout).negated(), frozenDelta: 0 },
+      ],
+      {
+        type: LedgerTxType.BINARY_WIN,
+        currency,
+        refType: 'binary_trade',
+        refId: ref.refId,
+        description: ref.description ?? 'Binary payout',
+      },
+      tx,
+    );
+  }
+
   async getLedger(userId: string, limit = 100) {
     const wallets = await this.prisma.wallet.findMany({ where: { userId } });
     const walletIds = wallets.map((w) => w.id);

@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -15,6 +15,7 @@ import {
   LogOut,
   Megaphone,
   AlertTriangle,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { NexoraLogo } from './Logo';
@@ -22,11 +23,13 @@ import { Spinner } from '../ui';
 
 const adminNav = [
   { href: '/admin', label: 'Дашборд', icon: LayoutDashboard },
+  { href: '/admin/binary', label: 'Binary Ops', icon: TrendingUp },
+  { href: '/admin/treasury', label: 'Пополнения', icon: Landmark },
+  { href: '/admin/support', label: 'Поддержка', icon: MessageCircle },
   { href: '/admin/queue', label: 'Очередь P2P', icon: Handshake },
   { href: '/admin/users', label: 'Сотрудники', icon: Users },
   { href: '/admin/ads', label: 'Объявления', icon: Megaphone },
   { href: '/admin/deals', label: 'Сделки и споры', icon: AlertTriangle },
-  { href: '/admin/treasury', label: 'Финансы', icon: Landmark },
   { href: '/admin/hedge', label: 'Хедж Bybit', icon: TrendingUp },
   { href: '/admin/rates', label: 'Курсы', icon: DollarSign },
 ];
@@ -37,18 +40,32 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!loading && !user) router.replace('/login');
-    if (!loading && user && user.role !== 'ADMIN') router.replace('/trade');
+    if (loading) return;
+    if (!user) {
+      router.replace('/login');
+      return;
+    }
+    if (user.role !== 'ADMIN') {
+      router.replace('/trade');
+    }
   }, [loading, user, router]);
 
-  if (loading || !user) return <Spinner />;
+  if (loading) return <Spinner />;
+  if (!user) return <Spinner />;
+  if (user.role !== 'ADMIN') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#07090F] text-nexora-muted text-sm">
+        Нет доступа к админке…
+      </div>
+    );
+  }
 
   const isActive = (href: string) =>
     href === '/admin' ? pathname === '/admin' : pathname.startsWith(href);
 
   return (
-    <div className="min-h-screen flex">
-      <aside className="w-64 shrink-0 border-r border-white/[0.06] bg-nexora-card/50 flex flex-col p-4">
+    <div className="admin-shell">
+      <aside className="w-56 sm:w-64 shrink-0 border-r border-white/[0.06] bg-nexora-card/50 flex flex-col p-4 overflow-y-auto overscroll-contain">
         <div className="mb-6">
           <NexoraLogo />
           <div className="mt-2 text-[10px] font-bold uppercase tracking-widest text-nexora-accent">
@@ -56,7 +73,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-0.5">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto">
           {adminNav.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
@@ -86,22 +103,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 border-b border-white/[0.06] flex items-center justify-between px-6 glass">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        <header className="h-14 shrink-0 border-b border-white/[0.06] flex items-center justify-between px-6 glass z-10">
           <div className="flex items-center gap-2 text-sm text-nexora-muted">
             <AlertTriangle size={14} className="text-nexora-accent" />
             Панель управления платформой
           </div>
           <div className="flex items-center gap-2">
-            <button className="h-9 w-9 flex items-center justify-center rounded-[14px] bg-white/[0.04] text-nexora-muted">
+            <Link href="/admin/binary" className="btn-secondary text-xs py-1.5">
+              Binary Ops
+            </Link>
+            <Link href="/admin/treasury" className="btn-secondary text-xs py-1.5">
+              Пополнения
+            </Link>
+            <button type="button" className="h-9 w-9 flex items-center justify-center rounded-[14px] bg-white/[0.04] text-nexora-muted">
               <Bell size={16} />
             </button>
-            <button className="h-9 w-9 flex items-center justify-center rounded-[14px] bg-white/[0.04] text-nexora-muted">
+            <button type="button" className="h-9 w-9 flex items-center justify-center rounded-[14px] bg-white/[0.04] text-nexora-muted">
               <Settings size={16} />
             </button>
           </div>
         </header>
-        <main className="flex-1 p-6 overflow-y-auto">{children}</main>
+        <main className="admin-shell__main flex-1 p-6">{children}</main>
       </div>
     </div>
   );
