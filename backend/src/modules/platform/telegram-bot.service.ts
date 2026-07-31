@@ -93,17 +93,13 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     const token = this.token();
-    const url = this.webAppUrl();
-    if (!token || !url) {
-      this.logger.warn('Telegram bot poller skipped (no TELEGRAM_BOT_TOKEN or HTTPS webapp URL)');
+    if (!token) {
+      this.logger.warn('Telegram bot skipped: set TELEGRAM_BOT_TOKEN on this service');
       return;
     }
+    const url = this.webAppUrl();
     try {
       await this.tgAdmin.refreshAdminChats();
-      await this.api('setChatMenuButton', {
-        menu_button: { type: 'web_app', text: 'Open App', web_app: { url } },
-      });
-      // Only /start visible in the slash menu for users
       await this.api('deleteMyCommands', {});
       await this.api('setMyCommands', {
         commands: [{ command: 'start', description: 'Join NEXORA Mega Drop' }],
@@ -115,8 +111,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await this.api('setMyShortDescription', {
         description: 'Nexora crypto exchange · 100,000 USDT Mega Drop for active traders',
       });
+      if (url) {
+        await this.api('setChatMenuButton', {
+          menu_button: { type: 'web_app', text: 'Open App', web_app: { url } },
+        });
+        this.logger.log(`Telegram bot ready · Mini App: ${url}`);
+      } else {
+        await this.api('setChatMenuButton', { menu_button: { type: 'commands' } });
+        this.logger.warn(
+          'Telegram bot ready WITHOUT Mini App — set TELEGRAM_WEBAPP_URL (HTTPS frontend) for /start button',
+        );
+      }
       await this.api('deleteWebhook', { drop_pending_updates: false });
-      this.logger.log(`Telegram bot ready · Mini App: ${url}`);
     } catch (e) {
       this.logger.warn(`Telegram bot setup: ${e}`);
     }
@@ -224,7 +230,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private menuRows(): InlineBtn[][] {
-    return [
+    const rows: InlineBtn[][] = [
       [
         { text: '📊 Дашборд', callback_data: 'adm:dash' },
         { text: '💰 Депозиты', callback_data: 'adm:deps' },
@@ -241,8 +247,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         { text: '⚙ Настройки', callback_data: 'adm:set' },
         { text: '🎲 Накрутить стату', callback_data: 'adm:seed' },
       ],
-      [{ text: '🚀 Mini App', web_app: { url: this.webAppUrl() } }],
     ];
+    const url = this.webAppUrl();
+    if (url) rows.push([{ text: '🚀 Mini App', web_app: { url } }]);
+    return rows;
   }
 
   private async poll() {
@@ -319,10 +327,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     if (cmd === '/start' || cmd === '/app') {
       const url = this.webAppUrl();
-      if (!url) return;
-      const rows: InlineBtn[][] = [
-        [{ text: '🏆 Join Mega Drop — Open App', web_app: { url } }],
-      ];
+      const rows: InlineBtn[][] = [];
+      if (url) {
+        rows.push([{ text: '🏆 Join Mega Drop — Open App', web_app: { url } }]);
+      }
       if (await this.isAdmin(msg.from, chatId)) {
         rows.push([{ text: '🛠 Admin panel', callback_data: 'adm:menu' }]);
       }
@@ -333,18 +341,20 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         '',
         'The rules are simple: the more active your trading in our mini-app, the higher your chances to grab your share of the pie. The <b>Top-10</b> traders will split the prize pool, and the <b>Grand Winner</b> will take home <b>30,000 USDT</b> directly to their account!',
         '',
-        '⏳ Registration for the event is now open. Don\'t miss your chance — hit the button below and join the race for 100 thousand dollars!',
+        url
+          ? '⏳ Registration for the event is now open. Don\'t miss your chance — hit the button below and join the race for 100 thousand dollars!'
+          : '⏳ Mini App URL is not configured yet (TELEGRAM_WEBAPP_URL). Bot commands still work.',
       ].join('\n');
       const banner = this.megaDropBannerPath();
       try {
         if (banner) {
-          await this.sendPhoto(chatId, banner, caption, rows);
+          await this.sendPhoto(chatId, banner, caption, rows.length ? rows : undefined);
         } else {
-          await this.send(chatId, caption, rows);
+          await this.send(chatId, caption, rows.length ? rows : undefined);
         }
       } catch (e) {
         this.logger.warn(`start welcome photo: ${e}`);
-        await this.send(chatId, caption, rows);
+        await this.send(chatId, caption, rows.length ? rows : undefined);
       }
     }
   }
