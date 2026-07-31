@@ -1,14 +1,12 @@
 # Default service = API (backend).
-# Preferred Railway setup: Root Directory = /backend + Config = /backend/railway.toml
+# Preferred: Root Directory = /backend + Config = /backend/railway.toml
 
 [build]
 builder = "RAILPACK"
 buildCommand = "cd backend && npm ci && npx prisma generate && npm run build"
 
 [deploy]
-# Migrations run on start (pre-deploy often fails without shell / DB ready)
 startCommand = "sh -c 'cd backend && npx prisma migrate deploy && node dist/main.js'"
-healthcheckPath = "/api/docs"
-healthcheckTimeout = 120
+# Healthcheck off by default — enable in Railway UI with path /api/health after first green deploy
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
