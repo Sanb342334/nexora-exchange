@@ -2,8 +2,10 @@
   "name": "p2p-exchange",
   "version": "1.0.0",
   "private": true,
-  "description": "Внутренняя P2P-платформа по продаже USDT (посредник + Bybit-хедж)",
+  "description": "NEXORA crypto exchange — futures, P2P, Telegram Mini App",
   "scripts": {
+    "build": "npm ci --prefix backend && npm run prisma:generate --prefix backend && npm run build --prefix backend",
+    "start": "npm run start:prod --prefix backend",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "backend:install": "cd backend && npm install",
