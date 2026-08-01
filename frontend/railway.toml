@@ -1,11 +1,16 @@
-# Use when Railway service Root Directory = /frontend
-# Set Config File absolute path: /frontend/railway.toml
+# Railway service settings:
+#   Root Directory = /frontend
+#   Config File    = /frontend/railway.toml
+#
+# Required Variables:
+#   BACKEND_URL = https://YOUR-API.up.railway.app   (public API URL, no trailing slash)
+#   (optional) NEXT_PUBLIC_API_URL = /api            — browser uses same-origin proxy
 
 [build]
 builder = "RAILPACK"
 buildCommand = "npm ci && npm run build"
 
 [deploy]
-startCommand = "npm run start"
+startCommand = "npx next start -H 0.0.0.0 -p ${PORT:-3000}"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
