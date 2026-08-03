@@ -2,15 +2,13 @@
 
 import Link from 'next/link';
 import { Sparkles, ArrowUpRight } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
 import { useLocale } from '@/lib/i18n/locale-context';
 import { HeroIllustration } from './HeroIllustration';
 
 export function HeroBanner() {
-  const { user } = useAuth();
   const { t } = useLocale();
   const h = t.app.hero;
-  const tradeHref = user ? '/trade/BTC_USDT' : '/login?next=/trade/BTC_USDT';
+  const tradeHref = '/trade';
 
   return (
     <section className="hero-banner relative overflow-visible pb-2 lg:min-h-[320px] lg:pb-0">

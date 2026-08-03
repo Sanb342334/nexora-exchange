@@ -59,13 +59,13 @@ export function NexoraShell({ children }: { children: ReactNode }) {
     if (loading) return;
     if (!user) {
       if (isTelegram) {
-        loginWithTelegram().catch(() => router.replace('/login'));
+        loginWithTelegram().catch(() => undefined);
         return;
       }
-      router.replace('/login');
+      // Outside Telegram: still send to trade; auth happens via stored session if any
+      router.replace('/trade');
       return;
     }
-    // Admin panel is Telegram bot only — keep trader UI in browser / Mini App.
   }, [loading, user, router, isTelegram, loginWithTelegram]);
 
   useEffect(() => {

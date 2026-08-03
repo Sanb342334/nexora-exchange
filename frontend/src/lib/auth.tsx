@@ -6,6 +6,7 @@ import { apiGet, apiPost, tokenStore } from './api';
 import type { User } from './types';
 import {
   getTelegramInitData,
+  isInsideTelegramShell,
   isTelegramMiniApp,
   setupTelegramUi,
   waitForTelegramWebApp,
@@ -66,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loginWithTelegram = useCallback(async (): Promise<User | null> => {
-    await waitForTelegramWebApp();
+    await waitForTelegramWebApp(4000);
     setupTelegramUi();
     const initData = getTelegramInitData();
     if (!initData) return null;
@@ -78,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStore.set(res.accessToken, res.refreshToken);
     setUser(res.user);
     applyUserLocale(res.user);
+    setLoading(false);
     return res.user;
   }, []);
 
@@ -85,18 +87,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        await waitForTelegramWebApp();
+        await waitForTelegramWebApp(4000);
         if (cancelled) return;
-        const inTg = setupTelegramUi() || isTelegramMiniApp();
+        const inTg = setupTelegramUi() || isTelegramMiniApp() || isInsideTelegramShell();
         setIsTelegram(inTg);
-        if (inTg && getTelegramInitData()) {
-          try {
-            await loginWithTelegram();
-            if (!cancelled) setLoading(false);
-            return;
-          } catch {
-            /* fall through to stored session */
+        if (inTg) {
+          // Prefer silent Telegram session; fall back to stored JWT
+          if (getTelegramInitData()) {
+            try {
+              await loginWithTelegram();
+              if (!cancelled) setLoading(false);
+              return;
+            } catch {
+              /* try stored tokens */
+            }
           }
+          if (tokenStore.access) {
+            if (!cancelled) await refreshUser();
+            return;
+          }
+          // Retry initData a bit longer inside Mini App
+          for (let i = 0; i < 8 && !cancelled; i++) {
+            await new Promise((r) => setTimeout(r, 300));
+            if (getTelegramInitData()) {
+              try {
+                await loginWithTelegram();
+                return;
+              } catch {
+                break;
+              }
+            }
+          }
+          if (!cancelled) setLoading(false);
+          return;
         }
         if (!cancelled) await refreshUser();
       } catch {
@@ -107,6 +130,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [loginWithTelegram, refreshUser]);
+
+  useEffect(() => {
+    const onReauth = () => {
+      if (isTelegramMiniApp() || isInsideTelegramShell()) {
+        loginWithTelegram().catch(() => undefined);
+      }
+    };
+    window.addEventListener('nexora:reauth', onReauth);
+    return () => window.removeEventListener('nexora:reauth', onReauth);
+  }, [loginWithTelegram]);
 
   const login = async (username: string, password: string, totpCode?: string) => {
     const res = await apiPost<{ accessToken: string; refreshToken: string; user: User }>(
@@ -139,22 +172,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    if (isTelegram || isTelegramMiniApp()) {
+    if (isTelegram || isTelegramMiniApp() || isInsideTelegramShell()) {
+      // Mini App: refresh Telegram session instead of showing login
       loginWithTelegram()
         .then((u) => {
           if (u) router.replace('/trade');
         })
-        .catch(() => {
-          tokenStore.clear();
-          setUser(null);
-        });
+        .catch(() => undefined);
       return;
     }
     const refresh = tokenStore.refresh;
     if (refresh) apiPost('/auth/logout', { refreshToken: refresh }).catch(() => undefined);
     tokenStore.clear();
     setUser(null);
-    router.push('/login');
+    router.push('/trade');
   };
 
   return (

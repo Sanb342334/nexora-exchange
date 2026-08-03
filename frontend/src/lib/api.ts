@@ -88,8 +88,17 @@ export async function api<T = any>(
     const ok = await refreshTokens();
     if (ok) return api<T>(path, { ...options, retry: false });
     tokenStore.clear();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.href = '/login';
+    if (typeof window !== 'undefined') {
+      const inTg =
+        document.documentElement.classList.contains('tg-miniapp') ||
+        Boolean(window.Telegram?.WebApp?.initData) ||
+        /Telegram/i.test(navigator.userAgent || '');
+      if (inTg) {
+        window.dispatchEvent(new Event('nexora:reauth'));
+      } else if (window.location.pathname !== '/login') {
+        // Browser only — Mini App never uses login page
+        window.location.href = '/trade';
+      }
     }
     throw new ApiError('Не авторизован', 401);
   }

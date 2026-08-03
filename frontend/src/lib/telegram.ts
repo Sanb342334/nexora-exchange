@@ -39,6 +39,17 @@ export function isTelegramMiniApp(): boolean {
   return Boolean(wa?.initData && wa.initData.length > 0);
 }
 
+/** Broader check: Mini App shell even before initData is ready. */
+export function isInsideTelegramShell(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isTelegramMiniApp()) return true;
+  if (window.Telegram?.WebApp) return true;
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  if (hash.includes('tgWebAppData') || search.includes('tgWebAppData')) return true;
+  return /Telegram/i.test(navigator.userAgent || '');
+}
+
 export function getTelegramInitData(): string | null {
   const wa = getTelegramWebApp();
   if (wa?.initData) return wa.initData;
